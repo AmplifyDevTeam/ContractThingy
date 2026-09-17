@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Amplify ContractOS
 
-## Getting Started
+Split into two deployable apps + free Firebase (Firestore only):
 
-First, run the development server:
+| Piece | Host | Root |
+| --- | --- | --- |
+| `frontend/` | Vercel project A | Root Directory = `frontend` |
+| `backend/` | Vercel project B | Root Directory = `backend` |
+| Data | Firebase Spark (free) | **Firestore only** — no Cloud Storage |
+
+## Local development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local
+npm install
+npm run seed
+npm run dev:api   # :4000
+npm run dev:web   # :3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 1) Free Firebase setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Create a project at [Firebase Console](https://console.firebase.google.com) (Spark / free).
+2. Enable **Firestore** (production mode). Skip Storage.
+3. Deploy Firestore rules:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+cd backend
+npx firebase-tools login
+npx firebase deploy --only firestore:rules --project amplify-contractos
+```
 
-## Learn More
+4. Service account JSON → env:
+   - `FIREBASE_PROJECT_ID`
+   - `FIREBASE_CLIENT_EMAIL`
+   - `FIREBASE_PRIVATE_KEY`
+5. First API request auto-seeds Firestore when the org is empty. Set `BOOTSTRAP_ADMIN_*` on the backend before that.
 
-To learn more about Next.js, take a look at the following resources:
+PDFs and signatures are stored as chunked docs under `organizations/{org}/files` (no paid Storage).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 2) Two Vercel projects (same Git repo)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Frontend — Root Directory `frontend`
+- `API_URL` = backend URL
+- `APP_URL` = this frontend URL
 
-## Deploy on Vercel
+### Backend — Root Directory `backend`
+- `DATA_ADAPTER=firestore`
+- Firebase keys above
+- `SESSION_SECRET`, `APP_URL`, `CORS_ORIGINS`, `BOOTSTRAP_ADMIN_*`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Auth
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Browser → frontend cookie → frontend server → API Bearer token. Admin SDK bypasses Firestore rules (rules deny all client SDK access).

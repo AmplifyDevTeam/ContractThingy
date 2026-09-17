@@ -1,0 +1,158 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-instrument-sans), "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-heading: var(--font-instrument-serif), "Instrument Serif", ui-serif, Georgia, serif;
+  --font-display: var(--font-instrument-serif), "Instrument Serif", ui-serif, Georgia, serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.7);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) * 1.3);
+  --radius-xl: calc(var(--radius) * 1.7);
+  --radius-2xl: calc(var(--radius) * 2.1);
+  --radius-3xl: calc(var(--radius) * 2.5);
+  --radius-4xl: calc(var(--radius) * 3);
+}
+
+:root {
+  --background: #f2f2ee;
+  --foreground: #121210;
+  --card: #ffffff;
+  --card-foreground: #121210;
+  --popover: #ffffff;
+  --popover-foreground: #121210;
+  --primary: #6f7c1f;
+  --primary-foreground: #f7f8ef;
+  --secondary: #ebebe6;
+  --secondary-foreground: #121210;
+  --muted: #ebebe6;
+  --muted-foreground: #6a6964;
+  --accent: #e8e9df;
+  --accent-foreground: #121210;
+  --destructive: #c44a4a;
+  --border: rgb(18 18 16 / 10%);
+  --input: rgb(18 18 16 / 12%);
+  --ring: #6f7c1f;
+  --chart-1: #6f7c1f;
+  --chart-2: #6a6964;
+  --chart-3: #9a9890;
+  --chart-4: #d8d8d0;
+  --chart-5: #ebebe6;
+  --radius: 0.375rem;
+  --sidebar: #ecece7;
+  --sidebar-foreground: #3a3935;
+  --sidebar-primary: #6f7c1f;
+  --sidebar-primary-foreground: #f7f8ef;
+  --sidebar-accent: #e2e2dc;
+  --sidebar-accent-foreground: #121210;
+  --sidebar-border: rgb(18 18 16 / 10%);
+  --sidebar-ring: #6f7c1f;
+  color-scheme: light;
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: #e8e6e1;
+  --card: #111111;
+  --card-foreground: #e8e6e1;
+  --popover: #141414;
+  --popover-foreground: #e8e6e1;
+  --primary: #c8d45c;
+  --primary-foreground: #14160a;
+  --secondary: #161616;
+  --secondary-foreground: #e8e6e1;
+  --muted: #161616;
+  --muted-foreground: #8c8984;
+  --accent: #161616;
+  --accent-foreground: #e8e6e1;
+  --destructive: #e07070;
+  --border: rgb(255 255 255 / 8%);
+  --input: rgb(255 255 255 / 10%);
+  --ring: #c8d45c;
+  --chart-1: #c8d45c;
+  --chart-2: #8c8984;
+  --chart-3: #5c5a56;
+  --chart-4: #2a2a2a;
+  --chart-5: #161616;
+  --sidebar: #0a0a0a;
+  --sidebar-foreground: #cfcbc4;
+  --sidebar-primary: #c8d45c;
+  --sidebar-primary-foreground: #14160a;
+  --sidebar-accent: #161616;
+  --sidebar-accent-foreground: #e8e6e1;
+  --sidebar-border: rgb(255 255 255 / 8%);
+  --sidebar-ring: #c8d45c;
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    letter-spacing: -0.011em;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 28%, transparent);
+    color: var(--foreground);
+  }
+  h1,
+  h2,
+  .font-display {
+    font-family: var(--font-instrument-serif), "Instrument Serif", Georgia, serif;
+    font-weight: 400;
+  }
+}
+
+.doc-frame {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+/* While GSAP morphs palette tokens, kill CSS color transitions so UI stays in lockstep */
+html.theme-animating,
+html.theme-animating * {
+  transition: none !important;
+}
+
+
+
