@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "npm run build:vercel",
-    "build:vercel": "esbuild src/vercel.ts --bundle --platform=node --target=node20 --format=esm --packages=external --alias:@=./src --outfile=api/index.js",
+    "build:vercel": "esbuild src/vercel.ts --bundle --platform=node --target=node20 --format=esm --packages=external --alias:@=./src --outfile=vercel-out/app.js",
     "start": "tsx src/index.ts",
     "seed": "tsx scripts/seed.ts"
   },
