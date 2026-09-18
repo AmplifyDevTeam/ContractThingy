@@ -1,10 +1,12 @@
 export const DEFAULT_ORG_ID = "amplify-media-technologies";
 
 export function isFirebaseConfigured(): boolean {
+  const key = process.env.FIREBASE_PRIVATE_KEY?.trim();
   return Boolean(
-    process.env.FIREBASE_PROJECT_ID &&
-      process.env.FIREBASE_CLIENT_EMAIL &&
-      process.env.FIREBASE_PRIVATE_KEY,
+    process.env.FIREBASE_PROJECT_ID?.trim() &&
+      process.env.FIREBASE_CLIENT_EMAIL?.trim() &&
+      key &&
+      key.includes("PRIVATE KEY"),
   );
 }
 

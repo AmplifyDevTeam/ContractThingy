@@ -51,6 +51,7 @@ const SAFE_MESSAGES = new Set([
   "Password login is disabled",
   "Missing Firebase ID token",
   "Invalid or expired Firebase session. Try signing in again.",
+  "Firebase Admin is not configured on the API. Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY.",
   "Your Google account has no email address.",
   "No workspace account for this email. Ask an admin to invite you, or use an allowed company domain.",
   "This account is disabled. Contact an admin.",
@@ -77,6 +78,7 @@ export function publicErrorMessage(err: unknown, fallback = "Request failed"): s
   const message = err instanceof Error ? err.message : fallback;
   if (SAFE_MESSAGES.has(message)) return message;
   if (message.startsWith("Missing permission:")) return message;
+  if (message.startsWith("Firebase project mismatch:")) return message;
   if (message.toLowerCase().includes("not found")) return "Not found";
   if (process.env.NODE_ENV !== "production") return message;
   return fallback;

@@ -18,6 +18,7 @@ import { getStore } from "@/lib/data/store";
 import { loadSecuritySettings, securityStatus, assertPasswordPolicy } from "@/lib/auth/security-settings";
 import { hashPassword } from "@/lib/auth/password";
 import { clientIp, publicErrorMessage, rateLimit } from "@/lib/security/guards";
+import { firebaseAdminStatus } from "@/lib/firebase/admin";
 import { newId, nowIso } from "@/lib/ids";
 import { writeAudit } from "@/lib/services/audit-service";
 import {
@@ -150,7 +151,13 @@ export function createApp() {
         503,
       );
     }
-    return c.json({ ok: true, service: "amplify-contractos-api" });
+    const firebase = firebaseAdminStatus();
+    return c.json({
+      ok: true,
+      service: "amplify-contractos-api",
+      firebaseAdmin: firebase.configured,
+      firebaseProjectId: firebase.projectId,
+    });
   });
 
   // ── Auth ──────────────────────────────────────────────────────────

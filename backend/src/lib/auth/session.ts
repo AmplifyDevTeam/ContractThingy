@@ -4,6 +4,7 @@ import {
   authAllowedDomains,
   authDefaultRole,
   authOpenSignup,
+  isFirebaseConfigured,
   passwordLoginEnabled,
   sessionSecret,
 } from "@/lib/config";
@@ -23,6 +24,18 @@ export type SessionUser = {
   displayName: string;
   role: UserRole;
 };
+
+function peekJwtAudience(idToken: string): string | null {
+  try {
+    const part = idToken.split(".")[1];
+    if (!part) return null;
+    const json = Buffer.from(part, "base64url").toString("utf8");
+    const payload = JSON.parse(json) as { aud?: string };
+    return typeof payload.aud === "string" ? payload.aud : null;
+  } catch {
+    return null;
+  }
+}
 
 function secretKey() {
   return new TextEncoder().encode(sessionSecret());
@@ -119,6 +132,20 @@ function canSelfSignup(email: string, existingCount: number): boolean {
 export async function loginWithFirebaseIdToken(idToken: string): Promise<SessionUser> {
   if (!idToken.trim()) throw new Error("Missing Firebase ID token");
 
+  if (!isFirebaseConfigured()) {
+    throw new Error(
+      "Firebase Admin is not configured on the API. Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY.",
+    );
+  }
+
+  const tokenAud = peekJwtAudience(idToken);
+  const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
+  if (tokenAud && projectId && tokenAud !== projectId) {
+    throw new Error(
+      `Firebase project mismatch: token is for "${tokenAud}" but API has FIREBASE_PROJECT_ID="${projectId}".`,
+    );
+  }
+
   let decoded: {
     uid: string;
     email?: string;
@@ -127,7 +154,8 @@ export async function loginWithFirebaseIdToken(idToken: string): Promise<Session
   };
   try {
     decoded = await adminAuth().verifyIdToken(idToken);
-  } catch {
+  } catch (err) {
+    console.error("[auth/firebase] verifyIdToken failed:", err instanceof Error ? err.message : err);
     throw new Error("Invalid or expired Firebase session. Try signing in again.");
   }
 
