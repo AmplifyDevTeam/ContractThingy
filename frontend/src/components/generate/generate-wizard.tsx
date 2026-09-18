@@ -176,22 +176,6 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
   const [createdPeople, setCreatedPeople] = useState<Person[]>([]);
   const [createdCompanies, setCreatedCompanies] = useState<CompanyRecord[]>([]);
 
-  if (!catalog.company || catalog.templates.length === 0) {
-    return (
-      <div className="max-w-lg space-y-4">
-        <BackLink href="/dashboard" label="Dashboard" />
-        <h1 className="font-display text-3xl tracking-tight">Workspace not ready</h1>
-        <p className="text-sm text-muted-foreground">
-          Company settings or templates are missing from the API. Refresh once, or check that Firestore
-          bootstrap finished.
-        </p>
-        <a href="/generate" className="inline-flex rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground">
-          Reload Generate
-        </a>
-      </div>
-    );
-  }
-
   const people = useMemo(() => {
     const ids = new Set(createdPeople.map((item) => item.id));
     return [...createdPeople, ...catalog.people.filter((item) => !ids.has(item.id))];
@@ -507,6 +491,22 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
   const partyLabel = PARTY_OPTIONS.find((item) => item.value === partyType)?.label ?? partyType;
   const actionLabel = [...EMPLOYEE_ACTIONS, ...CLIENT_ACTIONS].find((item) => item.value === action)?.label ?? action;
   const recordLabel = person?.fullLegalName ?? client?.legalName ?? "—";
+
+  if (!catalog.company || catalog.templates.length === 0) {
+    return (
+      <div className="max-w-lg space-y-4">
+        <BackLink href="/dashboard" label="Dashboard" />
+        <h1 className="font-display text-3xl tracking-tight">Workspace not ready</h1>
+        <p className="text-sm text-muted-foreground">
+          Company settings or templates are missing from the API. Refresh once, or check that Firestore
+          bootstrap finished.
+        </p>
+        <a href="/generate" className="inline-flex rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground">
+          Reload Generate
+        </a>
+      </div>
+    );
+  }
 
   return (
     <div className="relative xl:grid xl:grid-cols-[minmax(20rem,32rem)_minmax(0,1fr)] xl:items-start xl:gap-12">
