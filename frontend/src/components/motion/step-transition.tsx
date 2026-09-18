@@ -1,16 +1,57 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef } from "react";
+import gsap from "gsap";
+import { prefersReducedMotion } from "@/components/motion/reduced-motion";
 
-/** Wizard/signing step wrapper — no opacity animation (avoids stuck non-interactive UI). */
+function resetMotion(el: HTMLElement) {
+  gsap.killTweensOf(el);
+  gsap.set(el, { clearProps: "opacity,transform,y", opacity: 1, y: 0 });
+}
+
+/** Fade/slide content when `stepKey` changes (wizard steps, signing stages). */
 export function StepTransition({
-  stepKey: _stepKey,
+  stepKey,
   children,
   className,
 }: {
   stepKey: string | number;
-  children: ReactNode;
+  children: React.ReactNode;
   className?: string;
 }) {
-  return <div className={className}>{children}</div>;
+  const ref = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    if (prefersReducedMotion()) {
+      resetMotion(el);
+      return;
+    }
+
+    const tween = gsap.fromTo(
+      el,
+      { opacity: 0, y: 14 },
+      {
+        opacity: 1,
+        y: 0,
+        duration: 0.35,
+        ease: "power3.out",
+        overwrite: "auto",
+        onComplete: () => gsap.set(el, { clearProps: "opacity,transform,y" }),
+      },
+    );
+
+    return () => {
+      tween.kill();
+      resetMotion(el);
+    };
+  }, [stepKey]);
+
+  return (
+    <div ref={ref} className={className}>
+      {children}
+    </div>
+  );
 }
