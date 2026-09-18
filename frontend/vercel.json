@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "installCommand": "cd .. && npm install --workspace=frontend",
+  "installCommand": "if [ -f ../package-lock.json ]; then cd .. && npm install --workspace=frontend; else npm install; fi",
   "buildCommand": "npm run build"
 }
