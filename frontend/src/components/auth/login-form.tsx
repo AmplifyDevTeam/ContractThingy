@@ -57,23 +57,33 @@ export function LoginForm({
     if (!auth?.currentUser) throw new Error("No Firebase user");
     const idToken = await auth.currentUser.getIdToken(true);
     const result = await loginWithFirebaseAction(idToken);
-    if (result && !result.ok) {
-      throw new Error(result.error);
-    }
+    if (!result.ok) throw new Error(result.error);
+    // Full navigation so the session cookie is picked up by proxy/middleware.
+    window.location.assign("/dashboard");
   }
 
   useEffect(() => {
     if (!configured) return;
     const auth = getClientAuth();
     if (!auth) return;
+    let cancelled = false;
     setBusy(true);
-    void getRedirectResult(auth)
-      .then(async (cred) => {
-        if (!cred) return;
+    void (async () => {
+      try {
+        await auth.authStateReady();
+        if (cancelled) return;
+        const cred = await getRedirectResult(auth);
+        if (cancelled || !cred?.user) return;
         await exchangeFirebaseSession();
-      })
-      .catch((err) => setError(firebaseErrorMessage(err)))
-      .finally(() => setBusy(false));
+      } catch (err) {
+        if (!cancelled) setError(firebaseErrorMessage(err));
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [configured]);
 
   async function onGoogle() {
@@ -109,7 +119,6 @@ export function LoginForm({
       }
     } catch (err) {
       setError(firebaseErrorMessage(err));
-    } finally {
       setBusy(false);
     }
   }

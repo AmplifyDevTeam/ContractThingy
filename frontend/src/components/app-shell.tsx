@@ -6,8 +6,10 @@ import { BrandMark } from "@/components/brand-mark";
 import { PageEnter } from "@/components/motion/page-enter";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { logoutAction } from "@/lib/actions/auth";
+import { getClientAuth } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth/session";
+import { signOut } from "firebase/auth";
 
 const GROUPS = [
   {
@@ -95,7 +97,19 @@ export function AppShell({
           <div className="truncate text-[13px]">{user.displayName}</div>
           <div className="mt-0.5 text-[11px] text-muted-foreground">{user.role.replaceAll("_", " ")}</div>
           <div className="mt-3 flex items-center justify-between gap-2">
-            <form action={logoutAction}>
+            <form
+              action={async () => {
+                const auth = getClientAuth();
+                if (auth) {
+                  try {
+                    await signOut(auth);
+                  } catch {
+                    /* ignore */
+                  }
+                }
+                await logoutAction();
+              }}
+            >
               <button type="submit" className="text-[12px] text-muted-foreground hover:text-foreground">
                 Sign out
               </button>

@@ -32,14 +32,16 @@ export async function loginAction(formData: FormData) {
   redirect("/dashboard");
 }
 
+/** Exchange a Firebase ID token for an app session cookie. Caller navigates on success. */
 export async function loginWithFirebaseAction(
   idToken: string,
-): Promise<{ ok: false; error: string } | void> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     const data = await apiPost<{ token: string; user: SessionUser }>("/auth/firebase", {
       idToken,
     });
     await setSessionCookie(data.token);
+    return { ok: true };
   } catch (error) {
     if (error instanceof ApiError) {
       const hint =
@@ -50,7 +52,6 @@ export async function loginWithFirebaseAction(
     }
     return { ok: false, error: "Sign-in failed" };
   }
-  redirect("/dashboard");
 }
 
 export async function logoutAction() {
