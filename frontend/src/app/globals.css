@@ -154,5 +154,10 @@ html.theme-animating * {
   transition: none !important;
 }
 
+/* Radix dialogs can leave body pointer-events:none if a portal unmounts uncleanly */
+body {
+  pointer-events: auto !important;
+}
+
 
 
