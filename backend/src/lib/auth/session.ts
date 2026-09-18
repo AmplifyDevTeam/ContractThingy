@@ -178,7 +178,10 @@ export async function loginWithFirebaseIdToken(idToken: string): Promise<Session
         "No workspace account for this email. Ask an admin to invite you, or use an allowed company domain.",
       );
     }
-    const role = users.length === 0 ? ("SUPER_ADMIN" as const) : authDefaultRole();
+    // Bootstrap password admin alone shouldn't block the first real Firebase user from owning the workspace.
+    const hasFirebaseUser = users.some((item) => Boolean(item.firebaseUid));
+    const role =
+      users.length === 0 || !hasFirebaseUser ? ("SUPER_ADMIN" as const) : authDefaultRole();
     user = {
       id: newId("user"),
       email,
