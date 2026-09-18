@@ -12,10 +12,15 @@ export type SessionUser = {
 };
 
 function apiBase() {
-  return (process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000").replace(
-    /\/$/,
-    "",
-  );
+  const configured = (process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+  // Misconfigured production backend still has FIREBASE_PROJECT_ID=contractos.
+  // Route that host to the corrected API until the old Vercel project env is fixed.
+  if (!configured || configured.includes("contract-thingy-backend.vercel.app")) {
+    if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+      return "https://amplify-contractos-api.vercel.app";
+    }
+  }
+  return configured || "http://localhost:4000";
 }
 
 export class ApiError extends Error {

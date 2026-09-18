@@ -3,7 +3,13 @@ import { cookies } from "next/headers";
 import { SESSION_COOKIE } from "@/lib/api";
 
 function apiBase() {
-  return (process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000").replace(
+  const configured = (process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+  if (!configured || configured.includes("contract-thingy-backend.vercel.app")) {
+    if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+      return "https://amplify-contractos-api.vercel.app";
+    }
+  }
+  return (configured || "http://localhost:4000").replace(
     /\/$/,
     "",
   );
