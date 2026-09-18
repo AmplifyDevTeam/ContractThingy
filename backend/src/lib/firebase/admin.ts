@@ -73,7 +73,14 @@ export function getFirebaseAdmin(): App {
 }
 
 export function adminDb() {
-  return getFirestore(getFirebaseAdmin());
+  const db = getFirestore(getFirebaseAdmin());
+  try {
+    // Seed payloads often omit optional fields as undefined — Firestore rejects those.
+    db.settings({ ignoreUndefinedProperties: true });
+  } catch {
+    /* settings() may only be called once per app */
+  }
+  return db;
 }
 
 export function adminAuth() {

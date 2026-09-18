@@ -95,7 +95,14 @@ function personTypeFromParty(party: PartyType): PersonType {
   return "employee";
 }
 
-function defaultVars(company: CompanySettings) {
+function defaultVars(company?: CompanySettings | null) {
+  const c = company ?? ({
+    defaultCurrency: "PKR",
+    defaultProbationDays: 30,
+    defaultWorkMode: "hybrid",
+    defaultNoticePeriodDays: 30,
+    defaultJurisdiction: "Pakistan",
+  } as CompanySettings);
   return {
     jobTitle: "Software Developer",
     department: "Engineering",
@@ -110,7 +117,7 @@ function defaultVars(company: CompanySettings) {
     compensation: {
       salary: {
         amount: 150000,
-        currency: company.defaultCurrency,
+        currency: c.defaultCurrency,
         frequency: "monthly",
         paymentTiming: "monthly in arrears",
       },
@@ -119,7 +126,7 @@ function defaultVars(company: CompanySettings) {
       benefits: { enabled: false, items: [] as string[] },
       salaryDeductionClause: { enabled: false },
     },
-    probation: { enabled: true, duration: company.defaultProbationDays ?? 30, unit: "days", paid: true },
+    probation: { enabled: true, duration: c.defaultProbationDays ?? 30, unit: "days", paid: true },
     workingSchedule: {
       workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
       shiftType: "evening",
@@ -128,16 +135,16 @@ function defaultVars(company: CompanySettings) {
       breakStart: "22:00",
       breakEnd: "22:30",
       timezone: "Asia/Karachi",
-      workMode: company.defaultWorkMode ?? "remote",
+      workMode: c.defaultWorkMode ?? "remote",
       flexibleSchedule: false,
       urgentAvailability: false,
     },
-    noticePeriodDays: company.defaultNoticePeriodDays,
+    noticePeriodDays: c.defaultNoticePeriodDays,
     clientProtectionMonths: 12,
-    jurisdiction: company.defaultJurisdiction,
-    remoteWork: (company.defaultWorkMode ?? "remote") !== "on_site",
+    jurisdiction: c.defaultJurisdiction,
+    remoteWork: (c.defaultWorkMode ?? "remote") !== "on_site",
     serviceFee: 3500,
-    feeCurrency: company.defaultCurrency === "PKR" ? "USD" : company.defaultCurrency,
+    feeCurrency: c.defaultCurrency === "PKR" ? "USD" : c.defaultCurrency,
     feeFrequency: "monthly",
     termMonths: 12,
     adSpendPaidSeparately: true,

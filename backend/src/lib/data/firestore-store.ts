@@ -7,6 +7,40 @@ const SEEDED = new Set<string>();
 /** Stay under Firestore's ~1 MiB doc limit (base64 expands ~4/3). */
 const CHUNK_CHARS = 700_000;
 
+const SETTINGS_KEYS: SettingsKey[] = [
+  "company",
+  "ai",
+  "aiUsage",
+  "signing",
+  "email",
+  "security",
+  "sequences",
+];
+
+const BOOTSTRAP_COLLECTIONS: CollectionName[] = [
+  "users",
+  "people",
+  "companies",
+  "templates",
+  "templateVersions",
+  "clauses",
+  "clauseVersions",
+  "documentTypes",
+  "documents",
+  "documentVersions",
+  "documentRelationships",
+  "signingRequests",
+  "signatureEvents",
+  "storedSignatures",
+  "auditEvents",
+  "sourceDocuments",
+  "knowledgeFindings",
+  "documentPacks",
+  "themes",
+  "roleProfiles",
+  "notifications",
+];
+
 function fileDocId(path: string): string {
   return createHash("sha256").update(path).digest("hex").slice(0, 40);
 }
@@ -18,57 +52,42 @@ export class FirestoreStore implements DataStore {
     return adminDb().collection("organizations").doc(this.orgId).collection(collection);
   }
 
+  private settingsCol() {
+    return adminDb().collection("organizations").doc(this.orgId).collection("settings");
+  }
+
+  /** Complete a partial bootstrap (org doc written, settings/themes missing). */
+  private async repairBootstrap(): Promise<void> {
+    const seed = buildBootstrapState(this.orgId);
+    const orgRef = adminDb().collection("organizations").doc(this.orgId);
+    const orgSnap = await orgRef.get();
+    if (!orgSnap.exists) {
+      await orgRef.set({
+        id: this.orgId,
+        name: "Amplify Media Technologies",
+        bootstrappedAt: new Date().toISOString(),
+      });
+    }
+
+    for (const name of BOOTSTRAP_COLLECTIONS) {
+      const existing = await this.col(name).limit(1).get();
+      if (!existing.empty) continue;
+      const items = seed[name] as Array<{ id: string }>;
+      for (const item of items) {
+        await this.col(name).doc(item.id).set(item);
+      }
+    }
+
+    for (const key of SETTINGS_KEYS) {
+      const snap = await this.settingsCol().doc(key).get();
+      if (snap.exists) continue;
+      await this.settingsCol().doc(key).set(seed.settings[key] as Record<string, unknown>);
+    }
+  }
+
   private async ensureSeed(): Promise<void> {
     if (SEEDED.has(this.orgId)) return;
-    const snap = await adminDb().collection("organizations").doc(this.orgId).get();
-    if (!snap.exists) {
-      const seed = buildBootstrapState(this.orgId);
-      const batchWriter = async () => {
-        const collections: CollectionName[] = [
-          "users",
-          "people",
-          "companies",
-          "templates",
-          "templateVersions",
-          "clauses",
-          "clauseVersions",
-          "documentTypes",
-          "documents",
-          "documentVersions",
-          "documentRelationships",
-          "signingRequests",
-          "signatureEvents",
-          "storedSignatures",
-          "auditEvents",
-          "sourceDocuments",
-          "knowledgeFindings",
-          "documentPacks",
-          "themes",
-          "roleProfiles",
-          "notifications",
-        ];
-        await adminDb().collection("organizations").doc(this.orgId).set({
-          id: this.orgId,
-          name: "Amplify Media Technologies",
-          bootstrappedAt: new Date().toISOString(),
-        });
-        for (const name of collections) {
-          const items = seed[name] as Array<{ id: string }>;
-          for (const item of items) {
-            await this.col(name).doc(item.id).set(item);
-          }
-        }
-        const settings = adminDb().collection("organizations").doc(this.orgId).collection("settings");
-        await settings.doc("company").set(seed.settings.company);
-        await settings.doc("ai").set(seed.settings.ai);
-        await settings.doc("aiUsage").set(seed.settings.aiUsage);
-        await settings.doc("signing").set(seed.settings.signing);
-        await settings.doc("email").set(seed.settings.email);
-        await settings.doc("security").set(seed.settings.security);
-        await settings.doc("sequences").set(seed.settings.sequences);
-      };
-      await batchWriter();
-    }
+    await this.repairBootstrap();
     SEEDED.add(this.orgId);
   }
 
@@ -100,22 +119,18 @@ export class FirestoreStore implements DataStore {
 
   async getSettings<T>(key: SettingsKey): Promise<T> {
     await this.ensureSeed();
-    const snap = await adminDb()
-      .collection("organizations")
-      .doc(this.orgId)
-      .collection("settings")
-      .doc(key)
-      .get();
+    const snap = await this.settingsCol().doc(key).get();
+    if (!snap.exists) {
+      const seed = buildBootstrapState(this.orgId);
+      const value = seed.settings[key];
+      await this.settingsCol().doc(key).set(value as Record<string, unknown>);
+      return value as T;
+    }
     return snap.data() as T;
   }
 
   async setSettings<T>(key: SettingsKey, data: T): Promise<void> {
-    await adminDb()
-      .collection("organizations")
-      .doc(this.orgId)
-      .collection("settings")
-      .doc(key)
-      .set(data as Record<string, unknown>);
+    await this.settingsCol().doc(key).set(data as Record<string, unknown>);
   }
 
   async transact<T>(fn: (store: DataStore) => Promise<T>): Promise<T> {
