@@ -42,7 +42,11 @@ export async function loginWithFirebaseAction(
     await setSessionCookie(data.token);
   } catch (error) {
     if (error instanceof ApiError) {
-      return { ok: false, error: error.message };
+      const hint =
+        error.status >= 500
+          ? "Backend unavailable — check API_URL and that the API deployment is healthy."
+          : error.message;
+      return { ok: false, error: hint };
     }
     return { ok: false, error: "Sign-in failed" };
   }

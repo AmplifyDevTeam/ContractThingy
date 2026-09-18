@@ -58,7 +58,7 @@ export function LoginForm({
     const idToken = await auth.currentUser.getIdToken(true);
     const result = await loginWithFirebaseAction(idToken);
     if (result && !result.ok) {
-      setError(result.error);
+      throw new Error(result.error);
     }
   }
 
@@ -82,6 +82,11 @@ export function LoginForm({
     try {
       const auth = getClientAuth();
       if (!auth) throw new Error("Firebase Auth is not configured");
+      // Prefer redirect in production — Vercel COOP often breaks the Google popup.
+      if (process.env.NODE_ENV === "production") {
+        await signInWithRedirect(auth, googleProvider());
+        return;
+      }
       try {
         await signInWithPopup(auth, googleProvider());
         await exchangeFirebaseSession();
@@ -104,6 +109,7 @@ export function LoginForm({
       }
     } catch (err) {
       setError(firebaseErrorMessage(err));
+    } finally {
       setBusy(false);
     }
   }
