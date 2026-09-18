@@ -25,14 +25,15 @@ export function PageEnter({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    // Keep content visible while easing — avoid a blank 400ms flash on every nav.
     const tween = gsap.fromTo(
       root,
-      { opacity: 0, y: 12 },
+      { opacity: 0.92, y: 6 },
       {
         opacity: 1,
         y: 0,
-        duration: 0.4,
-        ease: "power3.out",
+        duration: 0.18,
+        ease: "power2.out",
         overwrite: "auto",
         onComplete: () => gsap.set(root, { clearProps: "opacity,transform,y" }),
       },

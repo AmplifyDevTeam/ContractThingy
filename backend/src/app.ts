@@ -9,11 +9,10 @@ import {
   loginWithPassword,
   hydrateSession,
   readSessionToken,
-  requirePermissionFromToken,
   sessionFromAuthHeader,
   type SessionUser,
 } from "@/lib/auth/session";
-import { AuthzError } from "@/lib/auth/permissions";
+import { AuthzError, assertPermission, type Permission } from "@/lib/auth/permissions";
 import { getStore } from "@/lib/data/store";
 import { loadSecuritySettings, securityStatus, assertPasswordPolicy } from "@/lib/auth/security-settings";
 import { hashPassword } from "@/lib/auth/password";
@@ -99,6 +98,7 @@ type Env = {
   Variables: {
     token: string | null;
     session: SessionUser | null;
+    hydratedSession: SessionUser | null;
   };
 };
 
@@ -115,8 +115,42 @@ function publicSigningRequest(request: SigningRequest) {
   return safe;
 }
 
-async function authed(c: { get: (k: "token") => string | null }, permission: Parameters<typeof requirePermissionFromToken>[1]) {
-  return requirePermissionFromToken(c.get("token"), permission);
+function slimDocument(doc: ContractDocument) {
+  return {
+    id: doc.id,
+    name: doc.name,
+    readableId: doc.readableId,
+    partyName: doc.partyName,
+    status: doc.status,
+    family: doc.family,
+    createdAt: doc.createdAt,
+    lastActivityAt: doc.lastActivityAt,
+    personId: doc.personId,
+    companyId: doc.companyId,
+    templateId: doc.templateId,
+    currentVersionId: doc.currentVersionId,
+  };
+}
+
+async function authed(
+  c: {
+    get: (k: "token" | "session" | "hydratedSession") => string | null | SessionUser | null;
+    set: (k: "hydratedSession", v: SessionUser | null) => void;
+  },
+  permission: Permission,
+) {
+  let hydrated = c.get("hydratedSession") as SessionUser | null;
+  if (!hydrated) {
+    const token = c.get("token") as string | null;
+    if (!token) throw new AuthzError("Authentication required");
+    const raw = (c.get("session") as SessionUser | null) ?? (await readSessionToken(token));
+    if (!raw) throw new AuthzError("Authentication required");
+    hydrated = await hydrateSession(raw);
+    if (!hydrated) throw new AuthzError("Authentication required");
+    c.set("hydratedSession", hydrated);
+  }
+  assertPermission(hydrated.role, permission);
+  return hydrated;
 }
 
 async function serveBrandingPath(
@@ -172,8 +206,9 @@ export function createApp() {
   app.use("*", async (c, next) => {
     const token = tokenFromRequest(c);
     c.set("token", token);
-    const raw = token ? await readSessionToken(token) : null;
-    c.set("session", raw ? await hydrateSession(raw) : null);
+    // Decode JWT only — hydrate once inside authed()/auth routes when needed.
+    c.set("session", token ? await readSessionToken(token) : null);
+    c.set("hydratedSession", null);
     await next();
   });
 
@@ -253,19 +288,25 @@ export function createApp() {
   });
 
   app.get("/auth/me", async (c) => {
-    const session = c.get("session");
+    const raw = c.get("session");
+    if (!raw) return c.json({ error: "Authentication required" }, 401);
+    const session = await hydrateSession(raw);
     if (!session) return c.json({ error: "Authentication required" }, 401);
-    // Re-mint cookie so promotions (e.g. VIEWER → SUPER_ADMIN) apply without re-login.
-    const security = await loadSecuritySettings();
-    const token = await createSessionToken(session, { sessionDays: security.sessionDays });
-    setCookie(c, SESSION_COOKIE, token, {
-      httpOnly: true,
-      sameSite: "Lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: security.sessionDays * 24 * 60 * 60,
-    });
-    return c.json({ user: session, token });
+    c.set("hydratedSession", session);
+    // Remint cookie only when role/name drifted from the JWT (e.g. promotion).
+    if (session.role !== raw.role || session.displayName !== raw.displayName || session.email !== raw.email) {
+      const security = await loadSecuritySettings();
+      const token = await createSessionToken(session, { sessionDays: security.sessionDays });
+      setCookie(c, SESSION_COOKIE, token, {
+        httpOnly: true,
+        sameSite: "Lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        maxAge: security.sessionDays * 24 * 60 * 60,
+      });
+      return c.json({ user: session, token });
+    }
+    return c.json({ user: session });
   });
 
   // ── Collections ───────────────────────────────────────────────────
@@ -407,7 +448,8 @@ export function createApp() {
   app.get("/documents", async (c) => {
     const actor = await authed(c, "documents.read");
     const store = await getStore(actor.orgId);
-    return c.json({ documents: await store.listDocs<ContractDocument>("documents") });
+    const documents = await store.listDocs<ContractDocument>("documents");
+    return c.json({ documents: documents.map(slimDocument) });
   });
 
   app.get("/documents/:id", async (c) => {
@@ -884,24 +926,32 @@ export function createApp() {
   app.get("/signatures", async (c) => {
     const actor = await authed(c, "signing.manage");
     const store = await getStore(actor.orgId);
+    const [requests, documents] = await Promise.all([
+      store.listDocs<SigningRequest>("signingRequests"),
+      store.listDocs<ContractDocument>("documents"),
+    ]);
     return c.json({
-      requests: (await store.listDocs<SigningRequest>("signingRequests")).map(publicSigningRequest),
-      documents: await store.listDocs<ContractDocument>("documents"),
+      requests: requests.map(publicSigningRequest),
+      documents: documents.map(slimDocument),
     });
   });
   app.get("/approvals", async (c) => {
     const actor = await authed(c, "documents.approve");
     const store = await getStore(actor.orgId);
-    const documents = await store.queryDocs<ContractDocument>(
-      "documents",
-      (item) => item.status === "REVIEW_REQUIRED",
-    );
-    return c.json({ documents });
+    const documents = await store.listDocs<ContractDocument>("documents");
+    const waiting = documents.filter((item) => item.status === "REVIEW_REQUIRED").map(slimDocument);
+    const cleared = documents.filter(
+      (item) => item.status === "APPROVED" || item.status === "FINALIZED",
+    ).length;
+    return c.json({ documents: waiting, cleared });
   });
   app.get("/audit", async (c) => {
     const actor = await authed(c, "audit.read");
     const store = await getStore(actor.orgId);
-    return c.json({ events: await store.listDocs<AuditEvent>("auditEvents") });
+    const events = await store.listDocs<AuditEvent>("auditEvents");
+    // Newest first, cap payload for the index page.
+    const sorted = [...events].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 200);
+    return c.json({ events: sorted });
   });
 
   app.get("/dashboard", async (c) => {
@@ -917,12 +967,24 @@ export function createApp() {
       store.getSettings<AiSettings>("ai"),
     ]);
     return c.json({
-      documents,
-      requests: requests.map(publicSigningRequest),
-      people,
-      companies,
-      sources,
-      findings,
+      documents: documents.map(slimDocument),
+      requests: requests.map((item) => ({
+        id: item.id,
+        documentId: item.documentId,
+        status: item.status,
+        expiresAt: item.expiresAt,
+      })),
+      people: people.map((item) => ({
+        id: item.id,
+        type: item.type,
+        employmentStatus: item.employmentStatus,
+      })),
+      companies: companies.map((item) => ({
+        id: item.id,
+        relationshipStatus: item.relationshipStatus,
+      })),
+      sources: sources.map((item) => ({ id: item.id })),
+      findings: findings.map((item) => ({ id: item.id, status: item.status })),
       ai,
       aiInsightsEnabled: Boolean(geminiEnabled() && ai?.enabled && (ai.dashboardInsights ?? true)),
     });
@@ -1080,6 +1142,7 @@ export function createApp() {
     const workspace = await loadWorkspaceSettings(store);
     const dark = resolveBrandingAssets(company, true);
     const light = resolveBrandingAssets(company, false);
+    c.header("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
     return c.json({
       orgId,
       displayName: company.displayName,

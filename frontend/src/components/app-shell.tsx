@@ -6,6 +6,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { NavProgress } from "@/components/nav-progress";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { logoutAction } from "@/lib/actions/auth";
+import { clearShellBrandingCache, useShellBranding } from "@/lib/branding/shell-branding";
 import { getClientAuth } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth/session";
@@ -51,20 +52,13 @@ const FLAT = GROUPS.flatMap((group) => group.items);
 
 export function AppShell({
   user,
-  branding,
   children,
 }: {
   user: SessionUser;
-  branding?: {
-    displayName: string;
-    productName: string;
-    logoSrc?: string | null;
-    usesCustomLogo?: boolean;
-    logoScale?: number;
-  };
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const branding = useShellBranding();
   const current = FLAT.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
   const mark = (
     <BrandMark
@@ -135,6 +129,7 @@ export function AppShell({
           <div className="mt-3 flex items-center justify-between gap-2">
             <form
               action={async () => {
+                clearShellBrandingCache();
                 const auth = getClientAuth();
                 if (auth) {
                   try {

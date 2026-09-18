@@ -55,8 +55,8 @@ export async function requireSession(): Promise<SessionUser> {
 }
 
 export async function requirePermission(permission: Permission): Promise<SessionUser> {
-  // Fresh role from API (hydrateSession) so promotions apply; also refreshes the JWT cookie.
-  const session = await getSession();
+  // Trust the JWT for nav auth. Layout already refreshes VIEWER cookies via /auth/me.
+  const session = await getSessionFromCookie();
   if (!session) redirect("/login");
   try {
     assertPermission(session.role, permission);

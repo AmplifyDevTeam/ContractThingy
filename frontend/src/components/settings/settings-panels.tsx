@@ -18,6 +18,7 @@ import { runThemeTransition } from "@/components/motion/theme-transition";
 import { saveAiSettingsAction, saveCompanySettingsAction, saveEmailSettingsAction, saveSecuritySettingsAction, saveSigningSettingsAction, saveWorkspaceSettingsAction, sendTestEmailAction, uploadBrandingAssetAction } from "@/lib/actions/workspace";
 import { isStoredBrandingPath, resolveBrandingAssets } from "@/lib/branding/identity";
 import { workspaceAssetUrl, workspaceLogoUrl } from "@/lib/branding/public-api";
+import { clearShellBrandingCache } from "@/lib/branding/shell-branding";
 import { fileToDataUrl, trimImageDataUrl } from "@/lib/branding/trim-image";
 import { formatEmailFrom } from "@/lib/services/email-service";
 import { AiHint } from "@/components/ai-hint";
@@ -280,6 +281,7 @@ export function SettingsPanels({
     try {
       const next = (await saveWorkspaceSettingsAction(payload)) as WorkspaceSettings;
       setWorkspaceState(next);
+      clearShellBrandingCache();
       router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not save logo size");
@@ -304,6 +306,7 @@ export function SettingsPanels({
       const { company: next } = await uploadBrandingAssetAction({ kind, dataUrl });
       setCompanyState(next);
       setLogoTick((n) => n + 1);
+      if (kind.startsWith("logo")) clearShellBrandingCache();
       router.refresh();
       toast.success(kind.startsWith("logo") ? "Logo uploaded — sidebar will update" : "Asset uploaded");
     } catch (error) {

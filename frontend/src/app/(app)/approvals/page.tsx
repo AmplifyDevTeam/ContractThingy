@@ -7,11 +7,11 @@ import type { ContractDocument } from "@/lib/types";
 
 export default async function ApprovalsPage() {
   await requirePermission("documents.approve");
-  const [{ documents: waiting }, { documents: all }] = await Promise.all([
-    apiGet<{ documents: ContractDocument[] }>("/approvals"),
-    apiGet<{ documents: ContractDocument[] }>("/documents"),
-  ]);
-  const approved = all.filter((item) => item.status === "APPROVED" || item.status === "FINALIZED");
+  const { documents: waiting, cleared } = await apiGet<{
+    documents: ContractDocument[];
+    cleared: number;
+  }>("/approvals");
+  const approvedCount = cleared ?? 0;
 
   return (
     <div>
@@ -43,7 +43,7 @@ export default async function ApprovalsPage() {
           <Stat value={waiting.length} hint="Review required before send" />
         </Tile>
         <Tile kicker="Cleared">
-          <Stat value={approved.length} hint="Approved or already finalized" />
+          <Stat value={approvedCount} hint="Approved or already finalized" />
         </Tile>
       </Bento>
     </div>
