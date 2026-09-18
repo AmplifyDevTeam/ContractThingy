@@ -1,4 +1,4 @@
-import type { CompanySettings } from "@/lib/types";
+import type { CompanySettings, WorkspaceSettings } from "@/lib/types";
 
 export const AMPLIFY_ADDRESS = {
   line1: "House # 948, KRL Road, Babar Colony",
@@ -22,7 +22,10 @@ export const AMPLIFY_COMPANY: CompanySettings = {
   website: "https://amplifymediatechnologies.com",
   authorizedSignatory: "Basit Gilani",
   authorizedSignatoryTitle: "CEO",
+  productName: "ContractOS",
   logoPath: "/branding/amplify-logo-dark.png",
+  logoDarkPath: "/branding/amplify-logo-dark.png",
+  logoLightPath: "/branding/amplify-logo-light.png",
   signaturePath: "/branding/signature-basit.png",
   sealPath: "/branding/amplify-seal-light.png",
   defaultThemeId: "amplify_modern_dark",
@@ -32,6 +35,16 @@ export const AMPLIFY_COMPANY: CompanySettings = {
   defaultProbationDays: 30,
   defaultWorkMode: "hybrid",
   defaultPageSize: "A4",
+};
+
+export const DEFAULT_WORKSPACE: WorkspaceSettings = {
+  name: "Amplify Media Technologies",
+  slug: "amplify",
+  productName: "ContractOS",
+  plan: "business",
+  status: "active",
+  seatLimit: 25,
+  shellLogoScale: 4,
 };
 
 export function formatCompanyAddress(company: CompanySettings): string {
@@ -45,10 +58,36 @@ export function websiteHost(website: string): string {
   return website.replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 
+/** Built-in Amplify fallback assets (static `/branding/*`). */
 export function brandingAssets(isDark: boolean) {
   return {
     logo: isDark ? "/branding/amplify-logo-dark.png" : "/branding/amplify-logo-light.png",
     signature: isDark ? "/branding/signature-basit.png" : "/branding/signature-basit-ink.png",
     seal: isDark ? "/branding/amplify-seal-dark.png" : "/branding/amplify-seal-light.png",
   };
+}
+
+/** Prefer tenant-uploaded paths, then legacy logoPath, then Amplify defaults. */
+export function resolveBrandingAssets(company: CompanySettings, isDark: boolean) {
+  const defaults = brandingAssets(isDark);
+  const logo =
+    (isDark ? company.logoDarkPath : company.logoLightPath) ||
+    company.logoPath ||
+    defaults.logo;
+  return {
+    logo,
+    signature: company.signaturePath || defaults.signature,
+    seal: company.sealPath || defaults.seal,
+  };
+}
+
+export function isStoredBrandingPath(path: string): boolean {
+  return Boolean(path) && !path.startsWith("/") && !path.startsWith("data:") && !path.startsWith("http");
+}
+
+/** Browser-facing logo URL for a stored or public path. */
+export function brandingAssetSrc(path: string | undefined, apiBase: string, variant: "dark" | "light" = "dark") {
+  if (!path) return `${apiBase.replace(/\/$/, "")}/workspace/branding/logo?variant=${variant}`;
+  if (path.startsWith("data:") || path.startsWith("http") || path.startsWith("/branding/")) return path;
+  return `${apiBase.replace(/\/$/, "")}/workspace/branding/logo?variant=${variant}`;
 }

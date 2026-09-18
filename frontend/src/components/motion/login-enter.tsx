@@ -45,5 +45,9 @@ export function LoginEnter({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  return <div ref={ref}>{children}</div>;
+  return (
+    <div ref={ref} suppressHydrationWarning>
+      {children}
+    </div>
+  );
 }

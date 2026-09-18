@@ -54,6 +54,7 @@ import { toPublicUser } from "@/lib/users-public";
 import {
   aiSettingsSchema,
   companyRecordSchema,
+  companySettingsSchema,
   createCompanySchema,
   createPersonSchema,
   emailSettingsSchema,
@@ -61,7 +62,15 @@ import {
   personSchema,
   securitySettingsSchema,
   signingSettingsSchema,
+  workspaceSettingsSchema,
 } from "@/lib/validation/schemas";
+import {
+  loadWorkspaceSettings,
+  resolveOrgIdFromHost,
+  uploadBrandingAsset,
+  type BrandingUploadKind,
+} from "@/lib/services/branding-service";
+import { isStoredBrandingPath, resolveBrandingAssets } from "@/lib/branding/identity";
 import { EMPLOYMENT_STATUSES, PERSON_TYPES, THEME_IDS, USER_ROLES } from "@/lib/types/enums";
 import type {
   AiSettings,
@@ -108,6 +117,46 @@ function publicSigningRequest(request: SigningRequest) {
 
 async function authed(c: { get: (k: "token") => string | null }, permission: Parameters<typeof requirePermissionFromToken>[1]) {
   return requirePermissionFromToken(c.get("token"), permission);
+}
+
+async function serveBrandingPath(
+  _c: unknown,
+  store: Awaited<ReturnType<typeof getStore>>,
+  path: string,
+) {
+  if (isStoredBrandingPath(path)) {
+    const file = await store.getFile(path);
+    if (!file) return new Response(JSON.stringify({ error: "Asset not found" }), { status: 404 });
+    return new Response(Buffer.from(file.bytes), {
+      status: 200,
+      headers: {
+        "Content-Type": file.contentType,
+        "Cache-Control": "public, max-age=300",
+      },
+    });
+  }
+
+  const rel = path.replace(/^\//, "");
+  const { existsSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const candidates = [
+    join(process.cwd(), "public", rel),
+    join(process.cwd(), "../frontend/public", rel),
+    join(process.cwd(), "../../frontend/public", rel),
+  ];
+  for (const filePath of candidates) {
+    if (!existsSync(filePath)) continue;
+    const bytes = readFileSync(filePath);
+    const mime = filePath.endsWith(".jpg") || filePath.endsWith(".jpeg") ? "image/jpeg" : "image/png";
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "Content-Type": mime,
+        "Cache-Control": "public, max-age=3600",
+      },
+    });
+  }
+  return new Response(JSON.stringify({ error: "Asset not found" }), { status: 404 });
 }
 
 export function createApp() {
@@ -206,7 +255,17 @@ export function createApp() {
   app.get("/auth/me", async (c) => {
     const session = c.get("session");
     if (!session) return c.json({ error: "Authentication required" }, 401);
-    return c.json({ user: session });
+    // Re-mint cookie so promotions (e.g. VIEWER → SUPER_ADMIN) apply without re-login.
+    const security = await loadSecuritySettings();
+    const token = await createSessionToken(session, { sessionDays: security.sessionDays });
+    setCookie(c, SESSION_COOKIE, token, {
+      httpOnly: true,
+      sameSite: "Lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: security.sessionDays * 24 * 60 * 60,
+    });
+    return c.json({ user: session, token });
   });
 
   // ── Collections ───────────────────────────────────────────────────
@@ -923,8 +982,9 @@ export function createApp() {
   app.get("/settings", async (c) => {
     const actor = await authed(c, "settings.read");
     const store = await getStore(actor.orgId);
-    const [company, ai, aiUsage, signing, themes, users] = await Promise.all([
+    const [company, workspace, ai, aiUsage, signing, themes, users] = await Promise.all([
       store.getSettings<CompanySettings>("company"),
+      loadWorkspaceSettings(store),
       store.getSettings<AiSettings>("ai"),
       store.getSettings<AiUsage>("aiUsage"),
       store.getSettings("signing"),
@@ -935,6 +995,7 @@ export function createApp() {
     const security = await loadSecuritySettings(store);
     return c.json({
       company,
+      workspace,
       ai,
       aiUsage,
       signing,
@@ -946,6 +1007,7 @@ export function createApp() {
       aiConfigured: geminiEnabled(),
       users: users.map(toPublicUser),
       canManageUsers: true,
+      seatsUsed: users.filter((u) => u.active).length,
       actor,
     });
   });
@@ -953,7 +1015,8 @@ export function createApp() {
   app.put("/settings/company", async (c) => {
     const actor = await authed(c, "settings.write");
     const store = await getStore(actor.orgId);
-    const parsed = await c.req.json();
+    const current = await store.getSettings<CompanySettings>("company");
+    const parsed = companySettingsSchema.parse({ ...current, ...(await c.req.json()) });
     await store.setSettings("company", parsed);
     await writeAudit(store, {
       type: "SETTINGS_UPDATED",
@@ -962,7 +1025,104 @@ export function createApp() {
       entityId: "company",
       summary: "Company settings updated.",
     });
-    return c.json({ ok: true });
+    return c.json(parsed);
+  });
+
+  app.put("/settings/workspace", async (c) => {
+    const actor = await authed(c, "settings.write");
+    const store = await getStore(actor.orgId);
+    const current = await loadWorkspaceSettings(store);
+    const parsed = workspaceSettingsSchema.parse({ ...current, ...(await c.req.json()) });
+    await store.setSettings("workspace", parsed);
+    // Keep company product subtitle in sync for shell + PDFs.
+    const company = await store.getSettings<CompanySettings>("company");
+    if (company.productName !== parsed.productName || company.displayName !== parsed.name) {
+      await store.setSettings("company", {
+        ...company,
+        productName: parsed.productName,
+      });
+    }
+    await writeAudit(store, {
+      type: "SETTINGS_UPDATED",
+      actor,
+      entityType: "settings",
+      entityId: "workspace",
+      summary: `Workspace updated (${parsed.slug} · ${parsed.plan}).`,
+    });
+    return c.json(parsed);
+  });
+
+  app.post("/settings/branding/upload", async (c) => {
+    const actor = await authed(c, "settings.write");
+    const store = await getStore(actor.orgId);
+    const body = z
+      .object({
+        kind: z.enum(["logoDark", "logoLight", "seal", "signature"]),
+        dataUrl: z.string().min(32),
+      })
+      .parse(await c.req.json());
+    const company = await uploadBrandingAsset(store, body.kind as BrandingUploadKind, body.dataUrl);
+    await writeAudit(store, {
+      type: "SETTINGS_UPDATED",
+      actor,
+      entityType: "settings",
+      entityId: "branding",
+      summary: `Branding asset uploaded (${body.kind}).`,
+    });
+    return c.json({ company });
+  });
+
+  /** Public tenant branding for shell / login (SaaS-ready host resolution). */
+  app.get("/workspace/branding", async (c) => {
+    const orgId = resolveOrgIdFromHost(c.req.header("x-frontend-host") || c.req.header("host"));
+    const store = await getStore(orgId);
+    const company = await store.getSettings<CompanySettings>("company");
+    const workspace = await loadWorkspaceSettings(store);
+    const dark = resolveBrandingAssets(company, true);
+    const light = resolveBrandingAssets(company, false);
+    return c.json({
+      orgId,
+      displayName: company.displayName,
+      legalName: company.legalName,
+      productName: workspace.productName || company.productName || "ContractOS",
+      workspaceName: workspace.name,
+      slug: workspace.slug,
+      plan: workspace.plan,
+      status: workspace.status,
+      seatLimit: workspace.seatLimit,
+      logoDark: dark.logo,
+      logoLight: light.logo,
+      usesCustomLogo: isStoredBrandingPath(dark.logo) || isStoredBrandingPath(light.logo),
+      shellLogoScale: workspace.shellLogoScale ?? 4,
+      brandingRevision: company.brandingRevision ?? 0,
+    });
+  });
+
+  app.get("/workspace/branding/logo", async (c) => {
+    const orgId = resolveOrgIdFromHost(c.req.header("x-frontend-host") || c.req.header("host"));
+    const store = await getStore(orgId);
+    const company = await store.getSettings<CompanySettings>("company");
+    const variant = c.req.query("variant") === "light" ? "light" : "dark";
+    const assets = resolveBrandingAssets(company, variant === "dark");
+    return serveBrandingPath(c, store, assets.logo);
+  });
+
+  app.get("/workspace/branding/asset", async (c) => {
+    const orgId = resolveOrgIdFromHost(c.req.header("x-frontend-host") || c.req.header("host"));
+    const store = await getStore(orgId);
+    const company = await store.getSettings<CompanySettings>("company");
+    const kind = c.req.query("kind") || "logoDark";
+    const dark = resolveBrandingAssets(company, true);
+    const light = resolveBrandingAssets(company, false);
+    const path =
+      kind === "logoLight"
+        ? light.logo
+        : kind === "seal"
+          ? dark.seal
+          : kind === "signature"
+            ? dark.signature
+            : dark.logo;
+    return serveBrandingPath(c, store, path);
   });
   app.put("/settings/ai", async (c) => {
     const actor = await authed(c, "settings.write");

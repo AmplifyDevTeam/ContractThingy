@@ -1,4 +1,4 @@
-import { AMPLIFY_COMPANY } from "@/lib/branding/identity";
+import { AMPLIFY_COMPANY, DEFAULT_WORKSPACE } from "@/lib/branding/identity";
 import { AMPLIFY_DOCUMENT_THEMES } from "@/lib/branding/themes";
 import { hashPassword } from "@/lib/auth/password";
 import { seedClauses } from "@/lib/seed/clauses";
@@ -33,6 +33,7 @@ import type {
   SecuritySettings,
   SigningSettings,
   SourceDocument,
+  WorkspaceSettings,
 } from "@/lib/types";
 
 export type OrgState = {
@@ -59,6 +60,7 @@ export type OrgState = {
   notifications: unknown[];
   settings: {
     company: CompanySettings;
+    workspace: WorkspaceSettings;
     ai: AiSettings;
     aiUsage: AiUsage;
     signing: SigningSettings;
@@ -292,6 +294,7 @@ export function buildBootstrapState(_orgId: string): OrgState {
     notifications: [],
     settings: {
       company,
+      workspace: { ...DEFAULT_WORKSPACE },
       ai: {
         enabled: false,
         analyzeUploads: true,

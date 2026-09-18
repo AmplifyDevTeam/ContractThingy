@@ -1,24 +1,28 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/theme-provider";
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Bento, MetaList, Stat, Tile } from "@/components/bento";
+import { BrandMark } from "@/components/brand-mark";
 import { UsersDirectory } from "@/components/settings/users-directory";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { brandingAssets } from "@/lib/branding/identity";
 import { BRANDING_TYPE_META } from "@/lib/branding/themes";
 import { runThemeTransition } from "@/components/motion/theme-transition";
-import { saveAiSettingsAction, saveCompanySettingsAction, saveEmailSettingsAction, saveSecuritySettingsAction, saveSigningSettingsAction, sendTestEmailAction } from "@/lib/actions/workspace";
+import { saveAiSettingsAction, saveCompanySettingsAction, saveEmailSettingsAction, saveSecuritySettingsAction, saveSigningSettingsAction, saveWorkspaceSettingsAction, sendTestEmailAction, uploadBrandingAssetAction } from "@/lib/actions/workspace";
+import { isStoredBrandingPath, resolveBrandingAssets } from "@/lib/branding/identity";
+import { workspaceAssetUrl, workspaceLogoUrl } from "@/lib/branding/public-api";
+import { fileToDataUrl, trimImageDataUrl } from "@/lib/branding/trim-image";
 import { formatEmailFrom } from "@/lib/services/email-service";
 import { AiHint } from "@/components/ai-hint";
 import { cn } from "@/lib/utils";
-import type { AiSettings, AiUsage, CompanySettings, DocumentTheme, EmailSettings, SecuritySettings, SigningSettings } from "@/lib/types";
+import type { AiSettings, AiUsage, CompanySettings, DocumentTheme, EmailSettings, SecuritySettings, SigningSettings, WorkspaceSettings } from "@/lib/types";
 import type { SigningOrder, ThemeId } from "@/lib/types/enums";
 import type { PublicOrgUser } from "@/lib/users-public";
 
@@ -172,6 +176,8 @@ const SESSION_PRESETS = [1, 7, 14, 30] as const;
 
 export function SettingsPanels({
   company,
+  workspace,
+  seatsUsed = 0,
   ai,
   usage,
   signing,
@@ -186,6 +192,8 @@ export function SettingsPanels({
   currentUserId = "",
 }: {
   company: CompanySettings;
+  workspace: WorkspaceSettings;
+  seatsUsed?: number;
   ai: AiSettings;
   usage: AiUsage;
   signing: SigningSettings;
@@ -200,6 +208,7 @@ export function SettingsPanels({
   currentUserId?: string;
 }) {
   const [companyState, setCompanyState] = useState(company);
+  const [workspaceState, setWorkspaceState] = useState(workspace);
   const [aiState, setAiState] = useState(ai);
   const [signingState, setSigningState] = useState(signing);
   const [emailState, setEmailState] = useState(emailSettings);
@@ -207,16 +216,27 @@ export function SettingsPanels({
   const [testTo, setTestTo] = useState(company.email);
   const [testing, setTesting] = useState(false);
   const [savingBrand, setSavingBrand] = useState(false);
+  const [savingWorkspace, setSavingWorkspace] = useState(false);
+  const [uploadingKind, setUploadingKind] = useState<string | null>(null);
+  const [logoTick, setLogoTick] = useState(0);
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [savingSigning, setSavingSigning] = useState(false);
   const [savingEmail, setSavingEmail] = useState(false);
   const [savingAi, setSavingAi] = useState(false);
   const [savingSecurity, setSavingSecurity] = useState(false);
+  const router = useRouter();
 
   const selectedTheme =
     themes.find((theme) => theme.id === companyState.defaultThemeId) ?? themes[0];
-  const darkAssets = brandingAssets(true);
-  const lightAssets = brandingAssets(false);
+  const resolved = resolveBrandingAssets(companyState, true);
+  const resolvedLight = resolveBrandingAssets(companyState, false);
+  const darkLogoSrc = workspaceLogoUrl("dark", `${logoTick}-${resolved.logo}`);
+  const lightLogoSrc = workspaceLogoUrl("light", `${logoTick}-${resolvedLight.logo}`);
+  const usesCustomLogo =
+    isStoredBrandingPath(resolved.logo) || isStoredBrandingPath(resolvedLight.logo);
+  const seatLimit = Math.max(1, workspaceState.seatLimit);
+  const seatsRemaining = Math.max(0, seatLimit - seatsUsed);
+  const seatsPct = Math.min(100, Math.round((Math.min(seatsUsed, seatLimit) / seatLimit) * 100));
 
   function selectTheme(id: ThemeId) {
     setCompanyState((prev) => ({ ...prev, defaultThemeId: id }));
@@ -225,12 +245,71 @@ export function SettingsPanels({
   async function saveBranding() {
     setSavingBrand(true);
     try {
-      await saveCompanySettingsAction(companyState);
+      const next = await saveCompanySettingsAction(companyState);
+      setCompanyState(next as CompanySettings);
       toast.success("Branding saved");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not save branding");
     } finally {
       setSavingBrand(false);
+    }
+  }
+
+  async function saveWorkspace() {
+    setSavingWorkspace(true);
+    try {
+      const next = (await saveWorkspaceSettingsAction(workspaceState)) as WorkspaceSettings;
+      setWorkspaceState(next);
+      setCompanyState((prev) => ({
+        ...prev,
+        productName: next.productName,
+        displayName: prev.displayName,
+      }));
+      router.refresh();
+      toast.success("Workspace saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save workspace");
+    } finally {
+      setSavingWorkspace(false);
+    }
+  }
+
+  async function persistShellLogoScale(shellLogoScale: number) {
+    const payload = { ...workspaceState, shellLogoScale };
+    setWorkspaceState(payload);
+    try {
+      const next = (await saveWorkspaceSettingsAction(payload)) as WorkspaceSettings;
+      setWorkspaceState(next);
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save logo size");
+    }
+  }
+
+  async function onUploadAsset(kind: "logoDark" | "logoLight" | "seal" | "signature", file: File) {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Choose a PNG or JPEG image");
+      return;
+    }
+    if (file.size > 2_500_000) {
+      toast.error("Image must be under 2.5 MB");
+      return;
+    }
+    setUploadingKind(kind);
+    try {
+      let dataUrl = await fileToDataUrl(file);
+      if (kind === "logoDark" || kind === "logoLight") {
+        dataUrl = await trimImageDataUrl(dataUrl);
+      }
+      const { company: next } = await uploadBrandingAssetAction({ kind, dataUrl });
+      setCompanyState(next);
+      setLogoTick((n) => n + 1);
+      router.refresh();
+      toast.success(kind.startsWith("logo") ? "Logo uploaded — sidebar will update" : "Asset uploaded");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setUploadingKind(null);
     }
   }
 
@@ -306,8 +385,9 @@ export function SettingsPanels({
       : 0;
 
   return (
-    <Tabs defaultValue="company">
+    <Tabs defaultValue="workspace">
       <TabsList variant="line" className="h-auto flex-wrap justify-start gap-x-4 rounded-none bg-transparent p-0">
+        <TabsTrigger value="workspace">Workspace</TabsTrigger>
         <TabsTrigger value="company">Company</TabsTrigger>
         <TabsTrigger value="branding">Branding</TabsTrigger>
         <TabsTrigger value="appearance">Appearance</TabsTrigger>
@@ -318,6 +398,203 @@ export function SettingsPanels({
         <TabsTrigger value="ai">AI</TabsTrigger>
         <TabsTrigger value="security">Security</TabsTrigger>
       </TabsList>
+
+      <TabsContent value="workspace" className="mt-6">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Tile kicker="SaaS workspace" span={2}>
+            <p className="mt-3 max-w-[56ch] text-sm leading-relaxed text-muted-foreground">
+              Tenant identity for white-label shell, login, and future subdomain routing (`slug.yourapp.com`).
+              Plan and seats are stored now so billing can plug in later.
+            </p>
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <Field label="Workspace name">
+                <Input
+                  value={workspaceState.name}
+                  onChange={(e) => setWorkspaceState({ ...workspaceState, name: e.target.value })}
+                />
+              </Field>
+              <Field label="Product name">
+                <Input
+                  value={workspaceState.productName}
+                  onChange={(e) => setWorkspaceState({ ...workspaceState, productName: e.target.value })}
+                />
+              </Field>
+              <Field label="Slug">
+                <Input
+                  value={workspaceState.slug}
+                  onChange={(e) =>
+                    setWorkspaceState({
+                      ...workspaceState,
+                      slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
+                    })
+                  }
+                />
+              </Field>
+              <Field label="Custom domain (optional)">
+                <Input
+                  value={workspaceState.customDomain ?? ""}
+                  placeholder="contracts.acme.com"
+                  onChange={(e) => setWorkspaceState({ ...workspaceState, customDomain: e.target.value || undefined })}
+                />
+              </Field>
+              <Field label="Plan">
+                <select
+                  className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                  value={workspaceState.plan}
+                  onChange={(e) =>
+                    setWorkspaceState({
+                      ...workspaceState,
+                      plan: e.target.value as WorkspaceSettings["plan"],
+                    })
+                  }
+                >
+                  <option value="trial">Trial</option>
+                  <option value="starter">Starter</option>
+                  <option value="business">Business</option>
+                  <option value="enterprise">Enterprise</option>
+                </select>
+              </Field>
+              <Field label="Status">
+                <select
+                  className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                  value={workspaceState.status}
+                  onChange={(e) =>
+                    setWorkspaceState({
+                      ...workspaceState,
+                      status: e.target.value as WorkspaceSettings["status"],
+                    })
+                  }
+                >
+                  <option value="trialing">Trialing</option>
+                  <option value="active">Active</option>
+                  <option value="suspended">Suspended</option>
+                </select>
+              </Field>
+              <Field label="Seat limit">
+                <Input
+                  type="number"
+                  min={1}
+                  value={workspaceState.seatLimit}
+                  onChange={(e) =>
+                    setWorkspaceState({
+                      ...workspaceState,
+                      seatLimit: Math.max(1, Number(e.target.value) || 1),
+                    })
+                  }
+                />
+              </Field>
+              <Button className="sm:col-span-2 w-fit" disabled={savingWorkspace} onClick={() => void saveWorkspace()}>
+                {savingWorkspace ? "Saving…" : "Save workspace"}
+              </Button>
+            </div>
+          </Tile>
+
+          <div className="flex flex-col gap-3">
+            <Tile kicker="Shell logo">
+              <p className="mt-3 text-[12px] leading-relaxed text-muted-foreground">
+                Top-left sidebar and login mark. Uploads fill the rail as a wordmark — use the size slider to scale.
+              </p>
+              <div className="mt-4">
+                <AssetUpload
+                  label="App icon"
+                  src={darkLogoSrc}
+                  dark
+                  busy={uploadingKind === "logoDark"}
+                  onFile={(file) => void onUploadAsset("logoDark", file)}
+                />
+              </div>
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="shell-logo-scale" className="text-[11px] text-muted-foreground">
+                    Logo size
+                  </Label>
+                  <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                    {workspaceState.shellLogoScale ?? 4}/5
+                  </span>
+                </div>
+                <input
+                  id="shell-logo-scale"
+                  type="range"
+                  min={1}
+                  max={5}
+                  step={1}
+                  value={workspaceState.shellLogoScale ?? 4}
+                  className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-muted accent-primary"
+                  onChange={(e) =>
+                    setWorkspaceState({
+                      ...workspaceState,
+                      shellLogoScale: Number(e.target.value),
+                    })
+                  }
+                  onPointerUp={(e) => void persistShellLogoScale(Number((e.target as HTMLInputElement).value))}
+                  onKeyUp={(e) => {
+                    if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") {
+                      void persistShellLogoScale(Number((e.target as HTMLInputElement).value));
+                    }
+                  }}
+                />
+              </div>
+              <div className="mt-4 rounded-md border border-border/80 bg-muted/20 p-3">
+                <p className="mb-2 text-[10px] font-mono tracking-[0.14em] text-muted-foreground uppercase">
+                  Preview
+                </p>
+                <div className="w-[11.5rem]">
+                  <BrandMark
+                    compact
+                    name={companyState.displayName || workspaceState.name}
+                    product={workspaceState.productName || companyState.productName || "ContractOS"}
+                    logoSrc={darkLogoSrc}
+                    logoIsWordmark={!usesCustomLogo}
+                    logoScale={workspaceState.shellLogoScale ?? 4}
+                  />
+                </div>
+              </div>
+            </Tile>
+
+            <Tile kicker="Seats">
+              <div className="mt-4">
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="font-mono text-[1.35rem] leading-none tracking-tight tabular-nums text-foreground">
+                    {seatsUsed}
+                    <span className="text-muted-foreground"> / {seatLimit}</span>
+                  </p>
+                  <p className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase">
+                    {workspaceState.plan}
+                  </p>
+                </div>
+                <div
+                  className="mt-4 h-1.5 overflow-hidden rounded-full bg-muted"
+                  role="meter"
+                  aria-valuenow={Math.min(seatsUsed, seatLimit)}
+                  aria-valuemin={0}
+                  aria-valuemax={seatLimit}
+                  aria-label="Seats used"
+                >
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width] duration-300"
+                    style={{ width: `${seatsPct}%` }}
+                  />
+                </div>
+                <dl className="mt-4 space-y-2 text-[12px]">
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-muted-foreground">Used</dt>
+                    <dd className="tabular-nums">{seatsUsed}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-muted-foreground">Available</dt>
+                    <dd className="tabular-nums">{seatsRemaining}</dd>
+                  </div>
+                </dl>
+                <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground">
+                  {seatsRemaining === 0
+                    ? "At capacity — raise the seat limit to invite more."
+                    : `${seatsRemaining} seat${seatsRemaining === 1 ? "" : "s"} left on ${workspaceState.plan}.`}
+                </p>
+              </div>
+            </Tile>
+          </div>
+        </div>
+      </TabsContent>
 
       <TabsContent value="company" className="mt-6">
         <Bento>
@@ -353,7 +630,14 @@ export function SettingsPanels({
               <Button
                 className="sm:col-span-2 w-fit"
                 onClick={() =>
-                  void saveCompanySettingsAction(companyState).then(() => toast.success("Company settings saved"))
+                  void saveCompanySettingsAction(companyState)
+                    .then((next) => {
+                      setCompanyState(next as CompanySettings);
+                      toast.success("Company settings saved");
+                    })
+                    .catch((error: unknown) =>
+                      toast.error(error instanceof Error ? error.message : "Could not save"),
+                    )
                 }
               >
                 Save company
@@ -362,12 +646,13 @@ export function SettingsPanels({
           </Tile>
           <Tile kicker="Live on PDFs">
             <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-              Letterhead, footer, and countersignature pull from this identity plus branding assets in `/public/branding`.
+              Letterhead, footer, and countersignature use this identity plus logos uploaded under Branding.
             </p>
             <MetaList
               rows={[
                 ["Signatory", companyState.authorizedSignatory],
                 ["Title", companyState.authorizedSignatoryTitle],
+                ["Product", companyState.productName || workspaceState.productName],
               ]}
             />
           </Tile>
@@ -450,16 +735,36 @@ export function SettingsPanels({
         <Bento>
           <Tile kicker="Letterhead assets" span={2}>
             <p className="mt-3 text-sm text-muted-foreground">
-              Logos, seal, and CEO signature are pulled from signed Amplify agreements and swap automatically with dark
-              or light document fields.
+              PDF letterhead logos (dark/light fields), seal, and signature. The dark logo also drives the
+              top-left shell mark — same control lives under Workspace → Shell logo.
             </p>
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <AssetPreview label="Logo · dark field" src={darkAssets.logo} dark />
-              <AssetPreview label="Logo · light field" src={lightAssets.logo} />
-              <AssetPreview label="Seal · dark field" src={darkAssets.seal} dark />
-              <AssetPreview label="Seal · light field" src={lightAssets.seal} />
-              <AssetPreview label="Signature · cyan ink" src={darkAssets.signature} dark />
-              <AssetPreview label="Signature · black ink" src={lightAssets.signature} />
+              <AssetUpload
+                label="Logo · dark field (also shell)"
+                src={darkLogoSrc}
+                dark
+                busy={uploadingKind === "logoDark"}
+                onFile={(file) => void onUploadAsset("logoDark", file)}
+              />
+              <AssetUpload
+                label="Logo · light field"
+                src={lightLogoSrc}
+                busy={uploadingKind === "logoLight"}
+                onFile={(file) => void onUploadAsset("logoLight", file)}
+              />
+              <AssetUpload
+                label="Seal"
+                src={workspaceAssetUrl("seal", `${logoTick}`)}
+                dark
+                busy={uploadingKind === "seal"}
+                onFile={(file) => void onUploadAsset("seal", file)}
+              />
+              <AssetUpload
+                label="Company signature"
+                src={workspaceAssetUrl("signature", `${logoTick}`)}
+                busy={uploadingKind === "signature"}
+                onFile={(file) => void onUploadAsset("signature", file)}
+              />
             </div>
           </Tile>
           <Tile kicker="Identity on PDFs">
@@ -1248,6 +1553,49 @@ function AssetPreview({ label, src, dark = false }: { label: string; src: string
   return (
     <div className="rounded-md border border-border p-3">
       <p className="text-[11px] text-muted-foreground">{label}</p>
+      <div
+        className="mt-2 flex h-20 items-center justify-center rounded-sm border border-border px-3"
+        style={{ background: dark ? "#0c0d0b" : "#f4f4ef" }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} alt={label} className="max-h-14 max-w-full object-contain" />
+      </div>
+    </div>
+  );
+}
+
+function AssetUpload({
+  label,
+  src,
+  dark = false,
+  busy,
+  onFile,
+}: {
+  label: string;
+  src: string;
+  dark?: boolean;
+  busy?: boolean;
+  onFile: (file: File) => void;
+}) {
+  return (
+    <div className="rounded-md border border-border p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-muted-foreground">{label}</p>
+        <label className="cursor-pointer text-[11px] text-primary hover:underline">
+          {busy ? "Uploading…" : "Upload"}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="sr-only"
+            disabled={busy}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onFile(file);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      </div>
       <div
         className="mt-2 flex h-20 items-center justify-center rounded-sm border border-border px-3"
         style={{ background: dark ? "#0c0d0b" : "#f4f4ef" }}

@@ -2,13 +2,23 @@ import { PageHeader } from "@/components/page-header";
 import { SettingsPanels } from "@/components/settings/settings-panels";
 import { requirePermission } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api";
-import type { AiSettings, AiUsage, CompanySettings, DocumentTheme, EmailSettings, SecuritySettings, SigningSettings } from "@/lib/types";
+import type {
+  AiSettings,
+  AiUsage,
+  CompanySettings,
+  DocumentTheme,
+  EmailSettings,
+  SecuritySettings,
+  SigningSettings,
+  WorkspaceSettings,
+} from "@/lib/types";
 import type { PublicOrgUser } from "@/lib/users-public";
 
 export default async function SettingsPage() {
   const session = await requirePermission("settings.read");
   const data = await apiGet<{
     company: CompanySettings;
+    workspace: WorkspaceSettings;
     ai: AiSettings;
     aiUsage: AiUsage;
     signing: SigningSettings;
@@ -30,6 +40,7 @@ export default async function SettingsPage() {
     aiConfigured: boolean;
     users: PublicOrgUser[];
     canManageUsers: boolean;
+    seatsUsed: number;
   }>("/settings");
 
   return (
@@ -38,10 +49,12 @@ export default async function SettingsPage() {
         back={{ href: "/dashboard", label: "Dashboard" }}
         kicker="Admin"
         title="Settings"
-        description="Company identity, signing defaults, email transport, and optional AI."
+        description="Workspace identity, branding, signing defaults, email, and optional AI — ready for multi-tenant SaaS."
       />
       <SettingsPanels
         company={data.company}
+        workspace={data.workspace}
+        seatsUsed={data.seatsUsed ?? data.users.length}
         ai={data.ai}
         usage={data.aiUsage}
         signing={data.signing}

@@ -1,4 +1,4 @@
-import { brandingAssets, formatCompanyAddress, websiteHost } from "@/lib/branding/identity";
+import { resolveBrandingAssets, formatCompanyAddress, websiteHost } from "@/lib/branding/identity";
 import { evaluateRuleGroup, evaluateRules } from "@/lib/rules/engine";
 import { interpolate } from "@/lib/render/interpolate";
 import type {
@@ -226,7 +226,7 @@ export function wrapDocumentHtml(args: {
   } = args;
   const isDark = theme.background === "dark";
   const title = template.name;
-  const assets = brandingAssets(isDark);
+  const assets = resolveBrandingAssets(company, isDark);
   const signatureBlock = renderSignatures(
     theme,
     company,

@@ -19,6 +19,7 @@ import {
   verifySigningOtpAction,
 } from "@/lib/actions/signing";
 import { broadcastSigningEvent } from "@/components/documents/document-live-sync";
+import { publicApiBase, workspaceLogoUrl } from "@/lib/branding/public-api";
 
 type Payload = Awaited<ReturnType<typeof openSigningAction>>;
 type Stage = "otp" | "review" | "sign" | "done";
@@ -31,6 +32,40 @@ export default function SignPage() {
   const [stage, setStage] = useState<Stage>("review");
   const [busy, setBusy] = useState(false);
   const [otpCode, setOtpCode] = useState("");
+  const [brand, setBrand] = useState({
+    name: "Amplify",
+    product: "ContractOS",
+    logoSrc: workspaceLogoUrl("dark"),
+    logoIsWordmark: true,
+    logoScale: 3,
+  });
+
+  useEffect(() => {
+    void fetch(`${publicApiBase()}/workspace/branding`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (
+          payload: {
+            displayName?: string;
+            productName?: string;
+            slug?: string;
+            logoDark?: string;
+            usesCustomLogo?: boolean;
+            shellLogoScale?: number;
+          } | null,
+        ) => {
+          if (!payload) return;
+          setBrand({
+            name: payload.displayName || "Amplify",
+            product: payload.productName || "ContractOS",
+            logoSrc: workspaceLogoUrl("dark", `${payload.slug ?? ""}-${payload.logoDark ?? ""}`),
+            logoIsWordmark: !payload.usesCustomLogo,
+            logoScale: payload.shellLogoScale ?? 3,
+          });
+        },
+      )
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     void openSigningAction(token).then((payload) => {
@@ -74,7 +109,14 @@ export default function SignPage() {
     return (
       <StepTransition stepKey="done">
         <div className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-6">
-          <BrandMark stacked />
+          <BrandMark
+            stacked
+            name={brand.name}
+            product={brand.product}
+            logoSrc={brand.logoSrc}
+            logoIsWordmark={brand.logoIsWordmark}
+            logoScale={brand.logoScale}
+          />
           <h1 className="font-display mt-8 text-[2.4rem] leading-tight tracking-tight">Agreement completed</h1>
           <p className="mt-4 text-muted-foreground">
             {data.documentName}
@@ -99,7 +141,14 @@ export default function SignPage() {
   if (stage === "otp") {
     return (
       <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
-        <BrandMark stacked />
+        <BrandMark
+          stacked
+          name={brand.name}
+          product={brand.product}
+          logoSrc={brand.logoSrc}
+          logoIsWordmark={brand.logoIsWordmark}
+          logoScale={brand.logoScale}
+        />
         <h1 className="font-display mt-8 text-[2rem] tracking-tight">Verify your email</h1>
         <p className="mt-3 text-sm text-muted-foreground">
           Enter the 6-digit code sent to confirm you can access {data.documentName}.
@@ -157,7 +206,13 @@ export default function SignPage() {
     <div className="mx-auto min-h-screen max-w-5xl px-6 py-10">
       <div className="mb-8 flex items-start justify-between gap-4">
         <div>
-          <BrandMark />
+          <BrandMark
+            name={brand.name}
+            product={brand.product}
+            logoSrc={brand.logoSrc}
+            logoIsWordmark={brand.logoIsWordmark}
+            logoScale={brand.logoScale}
+          />
           <p className="mt-8 text-[13px] text-muted-foreground">{data.readableId}</p>
           <h1 className="font-display mt-2 text-[2.15rem] leading-tight tracking-tight">{data.documentName}</h1>
           <p className="mt-2 text-sm text-muted-foreground">{data.recipientName}</p>

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Reveal } from "@/components/motion/reveal-bound";
 import { cn } from "@/lib/utils";
 
 export function Bento({
@@ -52,15 +53,15 @@ export function Tile({
   );
   if (href) {
     return (
-      <Link href={href} data-reveal className={classes}>
+      <Reveal as={Link} href={href} className={classes}>
         {body}
-      </Link>
+      </Reveal>
     );
   }
   return (
-    <article data-reveal className={classes}>
+    <Reveal as="article" className={classes}>
       {body}
-    </article>
+    </Reveal>
   );
 }
 

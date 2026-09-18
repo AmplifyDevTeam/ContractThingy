@@ -50,7 +50,7 @@ export function StepTransition({
   }, [stepKey]);
 
   return (
-    <div ref={ref} className={className}>
+    <div ref={ref} className={className} suppressHydrationWarning>
       {children}
     </div>
   );

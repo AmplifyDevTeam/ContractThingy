@@ -2,6 +2,7 @@ import { assembleDocument } from "@/lib/render/assemble";
 import { resolveThemeId, themeById } from "@/lib/branding/themes";
 import { nextReadableId, newId, nowIso } from "@/lib/ids";
 import { writeAudit } from "@/lib/services/audit-service";
+import { resolveCompanyAssetsForPdf } from "@/lib/services/branding-service";
 import type { DataStore } from "@/lib/data/store";
 import type { SessionUser } from "@/lib/auth/session";
 import type {
@@ -28,6 +29,22 @@ export type PreviewResult = {
   template: Template;
   templateVersion: TemplateVersion;
 };
+
+async function companyWithEmbeddedAssets(
+  store: DataStore,
+  company: CompanySettings,
+  isDark: boolean,
+): Promise<CompanySettings> {
+  const assets = await resolveCompanyAssetsForPdf(store, company, isDark);
+  return {
+    ...company,
+    logoPath: assets.logo,
+    logoDarkPath: assets.logo,
+    logoLightPath: assets.logo,
+    signaturePath: assets.signature,
+    sealPath: assets.seal,
+  };
+}
 
 async function loadGenerationContext(store: DataStore, templateId: string) {
   const template = await store.getDoc<Template>("templates", templateId);
@@ -62,13 +79,14 @@ export async function previewFromInput(
     themeById(themeLookupId) ??
     ctx.themes[0];
 
+  const company = await companyWithEmbeddedAssets(store, ctx.company, theme.background === "dark");
   const assembled = assembleDocument({
     template: ctx.template,
     templateVersion: ctx.templateVersion,
     clauses: ctx.clauses,
     clauseVersions: ctx.clauseVersions,
     theme,
-    company: ctx.company,
+    company,
     person,
     client,
     variables: parsed.variables,
@@ -124,16 +142,18 @@ export async function generateDocument(
       parsed.themeId ?? company.defaultThemeId ?? preview.template.themeId,
     );
     const themeList = await tx.listDocs<DocumentTheme>("themes");
+    const theme =
+      themeList.find((item) => item.id === generatedThemeId) ??
+      themeById(generatedThemeId) ??
+      themeList[0];
+    const companyForPdf = await companyWithEmbeddedAssets(tx, company, theme.background === "dark");
     const assembled = assembleDocument({
       template: preview.template,
       templateVersion: preview.templateVersion,
       clauses: await tx.listDocs<Clause>("clauses"),
       clauseVersions: await tx.listDocs<ClauseVersion>("clauseVersions"),
-      theme:
-        themeList.find((item) => item.id === generatedThemeId) ??
-        themeById(generatedThemeId) ??
-        themeList[0],
-      company,
+      theme,
+      company: companyForPdf,
       person,
       client,
       variables: parsed.variables,
@@ -344,6 +364,7 @@ export async function assembleCurrentHtml(
     (await store.listDocs<DocumentTheme>("themes")).find((item) => item.id === themeId) ??
     themeById(themeId) ??
     (await store.listDocs<DocumentTheme>("themes"))[0];
+  const companyForPdf = await companyWithEmbeddedAssets(store, company, theme.background === "dark");
   const person =
     (version.snapshot.personSnapshot as Person | undefined) ??
     (document.personId ? await store.getDoc<Person>("people", document.personId) : null);
@@ -366,7 +387,7 @@ export async function assembleCurrentHtml(
     clauses: await store.listDocs<Clause>("clauses"),
     clauseVersions: await store.listDocs<ClauseVersion>("clauseVersions"),
     theme,
-    company,
+    company: companyForPdf,
     person,
     client,
     variables: version.snapshot.resolvedVariables,

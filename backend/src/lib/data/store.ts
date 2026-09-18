@@ -31,7 +31,15 @@ export type CollectionName =
   | "roleProfiles"
   | "notifications";
 
-export type SettingsKey = "company" | "ai" | "aiUsage" | "signing" | "email" | "security" | "sequences";
+export type SettingsKey =
+  | "company"
+  | "workspace"
+  | "ai"
+  | "aiUsage"
+  | "signing"
+  | "email"
+  | "security"
+  | "sequences";
 
 export interface DataStore {
   orgId: string;

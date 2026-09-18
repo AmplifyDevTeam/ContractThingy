@@ -30,8 +30,14 @@ function parseMargins(html: string): Box {
 
 function inlinePublicAssets(html: string): string {
   return html.replace(/src="(\/(?:branding)\/[^"]+)"/g, (full, path: string) => {
-    const file = join(process.cwd(), "public", path);
-    if (!existsSync(file)) return full;
+    const rel = path.replace(/^\//, "");
+    const candidates = [
+      join(process.cwd(), "public", rel),
+      join(process.cwd(), "../frontend/public", rel),
+      join(process.cwd(), "../../frontend/public", rel),
+    ];
+    const file = candidates.find((candidate) => existsSync(candidate));
+    if (!file) return full;
     const bytes = readFileSync(file);
     const mime = path.endsWith(".jpg") || path.endsWith(".jpeg") ? "image/jpeg" : "image/png";
     return `src="data:${mime};base64,${bytes.toString("base64")}"`;

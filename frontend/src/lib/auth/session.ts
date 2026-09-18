@@ -55,7 +55,9 @@ export async function requireSession(): Promise<SessionUser> {
 }
 
 export async function requirePermission(permission: Permission): Promise<SessionUser> {
-  const session = await requireSession();
+  // Fresh role from API (hydrateSession) so promotions apply; also refreshes the JWT cookie.
+  const session = await getSession();
+  if (!session) redirect("/login");
   try {
     assertPermission(session.role, permission);
   } catch (error) {

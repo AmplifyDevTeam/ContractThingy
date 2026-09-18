@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
-import { PageEnter } from "@/components/motion/page-enter";
 import { NavProgress } from "@/components/nav-progress";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { logoutAction } from "@/lib/actions/auth";
@@ -52,28 +51,51 @@ const FLAT = GROUPS.flatMap((group) => group.items);
 
 export function AppShell({
   user,
+  branding,
   children,
 }: {
   user: SessionUser;
+  branding?: {
+    displayName: string;
+    productName: string;
+    logoSrc?: string | null;
+    usesCustomLogo?: boolean;
+    logoScale?: number;
+  };
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const current = FLAT.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
+  const mark = (
+    <BrandMark
+      compact
+      name={branding?.displayName ?? "Amplify Media"}
+      product={branding?.productName ?? "ContractOS"}
+      logoSrc={branding?.logoSrc}
+      logoIsWordmark={!branding?.usesCustomLogo}
+      logoScale={branding?.logoScale}
+    />
+  );
 
   return (
-    <div className="min-h-screen bg-background lg:grid lg:h-dvh lg:grid-cols-[12rem_minmax(0,1fr)] lg:overflow-hidden">
+    <div className="min-h-screen bg-background lg:grid lg:h-dvh lg:grid-cols-[11.5rem_minmax(0,1fr)] lg:overflow-hidden">
       <NavProgress />
-      <aside className="hidden h-full min-h-0 flex-col overflow-hidden overscroll-none border-r border-border px-4 py-6 lg:flex">
-        <Link href="/dashboard" className="block shrink-0">
-          <BrandMark />
+      <aside className="hidden h-full min-h-0 flex-col overflow-hidden overscroll-none border-r border-border/80 bg-sidebar px-4 py-6 lg:flex">
+        <Link
+          href="/dashboard"
+          className="block shrink-0 border-b border-border/80 pb-5 outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          {mark}
         </Link>
         <nav
           aria-label="Primary"
-          className="mt-10 min-h-0 flex-1 space-y-7 overflow-y-auto overscroll-contain"
+          className="mt-6 min-h-0 flex-1 space-y-7 overflow-y-auto overscroll-contain"
         >
           {GROUPS.map((group) => (
             <div key={group.label}>
-              <div className="mb-2 text-[11px] text-muted-foreground">{group.label}</div>
+              <div className="mb-2 px-2.5 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                {group.label}
+              </div>
               <div className="space-y-0.5">
                 {group.items.map((item) => {
                   const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -83,12 +105,21 @@ export function AppShell({
                       href={item.href}
                       prefetch
                       className={cn(
-                        "group flex items-baseline gap-3 border-l-2 border-transparent py-1.5 pl-3 text-[14px] text-muted-foreground transition-colors hover:text-foreground",
-                        active && "border-primary text-foreground",
+                        "group flex items-baseline gap-2.5 rounded-md py-1.5 pr-2 pl-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground",
+                        active && "bg-sidebar-accent text-foreground",
                       )}
                     >
-                      <span className="font-mono text-[10px] text-muted-foreground/80">{item.n}</span>
-                      <span className="transition-transform duration-200 group-hover:translate-x-0.5">{item.label}</span>
+                      <span
+                        className={cn(
+                          "font-mono text-[10px] text-muted-foreground/70 transition-colors",
+                          active && "text-primary",
+                        )}
+                      >
+                        {item.n}
+                      </span>
+                      <span className="transition-transform duration-200 group-hover:translate-x-0.5">
+                        {item.label}
+                      </span>
                     </Link>
                   );
                 })}
@@ -96,9 +127,11 @@ export function AppShell({
             </div>
           ))}
         </nav>
-        <div className="shrink-0 border-t border-border pt-4">
-          <div className="truncate text-[13px]">{user.displayName}</div>
-          <div className="mt-0.5 text-[11px] text-muted-foreground">{user.role.replaceAll("_", " ")}</div>
+        <div className="shrink-0 border-t border-border/80 pt-4">
+          <div className="truncate text-[13px] text-foreground">{user.displayName}</div>
+          <div className="mt-0.5 font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+            {user.role.replaceAll("_", " ")}
+          </div>
           <div className="mt-3 flex items-center justify-between gap-2">
             <form
               action={async () => {
@@ -124,7 +157,14 @@ export function AppShell({
 
       <div className="flex min-w-0 flex-col lg:min-h-0 lg:overflow-hidden">
         <header className="flex items-center justify-between gap-4 border-b border-border px-4 py-3 lg:hidden">
-          <BrandMark />
+          <BrandMark
+            compact
+            name={branding?.displayName ?? "Amplify Media"}
+            product={branding?.productName ?? "ContractOS"}
+            logoSrc={branding?.logoSrc}
+            logoIsWordmark={!branding?.usesCustomLogo}
+            logoScale={branding?.logoScale}
+          />
           <div className="flex items-center gap-2">
             <span className="text-[12px] text-muted-foreground">{current?.label ?? "Workspace"}</span>
             <ThemeToggle compact />
@@ -148,12 +188,14 @@ export function AppShell({
         <div className="hidden shrink-0 items-center justify-between border-b border-border px-8 py-3.5 lg:flex">
           <span className="font-display text-[1.15rem] tracking-tight">{current?.label ?? "Workspace"}</span>
           <div className="flex items-center gap-3">
-            <span className="text-[12px] text-muted-foreground">Amplify Media · Internal</span>
+            <span className="text-[12px] text-muted-foreground">
+              {branding?.displayName ?? "Amplify Media"} · Internal
+            </span>
             <ThemeToggle compact />
           </div>
         </div>
         <main className="flex-1 px-4 py-8 sm:px-6 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:px-10 lg:py-9">
-          <PageEnter>{children}</PageEnter>
+          {children}
         </main>
       </div>
     </div>

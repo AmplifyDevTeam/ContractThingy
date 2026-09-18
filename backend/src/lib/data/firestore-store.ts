@@ -9,6 +9,7 @@ const CHUNK_CHARS = 700_000;
 
 const SETTINGS_KEYS: SettingsKey[] = [
   "company",
+  "workspace",
   "ai",
   "aiUsage",
   "signing",

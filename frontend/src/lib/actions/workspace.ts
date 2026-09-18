@@ -19,6 +19,7 @@ import type {
   RoleProfile,
   SourceDocument,
   CompanySettings,
+  WorkspaceSettings,
 } from "@/lib/types";
 
 export type SigningLinkResult = {
@@ -98,7 +99,18 @@ export async function recommendAction(input: {
 }
 
 export async function saveCompanySettingsAction(input: unknown) {
-  await apiPut("/settings/company", input);
+  return apiPut<CompanySettings>("/settings/company", input);
+}
+
+export async function saveWorkspaceSettingsAction(input: unknown) {
+  return apiPut<WorkspaceSettings>("/settings/workspace", input);
+}
+
+export async function uploadBrandingAssetAction(input: {
+  kind: "logoDark" | "logoLight" | "seal" | "signature";
+  dataUrl: string;
+}) {
+  return apiPost<{ company: CompanySettings }>("/settings/branding/upload", input);
 }
 
 export async function saveAiSettingsAction(input: unknown) {

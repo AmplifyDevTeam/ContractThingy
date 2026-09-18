@@ -598,9 +598,15 @@ export const companySettingsSchema = z.object({
   website: z.string(),
   authorizedSignatory: z.string(),
   authorizedSignatoryTitle: z.string(),
+  /** Product subtitle in the shell (e.g. ContractOS). */
+  productName: z.string().default("ContractOS"),
   logoPath: z.string().optional(),
+  logoDarkPath: z.string().optional(),
+  logoLightPath: z.string().optional(),
   signaturePath: z.string().optional(),
   sealPath: z.string().optional(),
+  /** Bumps when branding assets change (cache bust for shell logo URLs). */
+  brandingRevision: z.number().int().nonnegative().optional(),
   defaultThemeId: z.enum(THEME_IDS).default("amplify_modern_dark"),
   defaultJurisdiction: z.string().default("Pakistan"),
   defaultNoticePeriodDays: z.number().int().positive().default(30),
@@ -608,6 +614,27 @@ export const companySettingsSchema = z.object({
   defaultProbationDays: z.number().int().positive().default(30),
   defaultWorkMode: z.enum(WORK_MODES).default("hybrid"),
   defaultPageSize: z.enum(["A4", "Letter"]).default("A4"),
+});
+
+export const WORKSPACE_PLANS = ["trial", "starter", "business", "enterprise"] as const;
+export const WORKSPACE_STATUSES = ["trialing", "active", "suspended"] as const;
+
+/** SaaS workspace / tenant metadata (org-scoped). */
+export const workspaceSettingsSchema = z.object({
+  name: z.string().min(1).default("Workspace"),
+  slug: z
+    .string()
+    .min(2)
+    .max(48)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens")
+    .default("workspace"),
+  productName: z.string().min(1).default("ContractOS"),
+  plan: z.enum(WORKSPACE_PLANS).default("trial"),
+  status: z.enum(WORKSPACE_STATUSES).default("trialing"),
+  seatLimit: z.number().int().positive().default(5),
+  customDomain: z.string().optional(),
+  /** Sidebar / login logo mark size (1 = compact, 5 = large). */
+  shellLogoScale: z.number().int().min(1).max(5).default(4),
 });
 
 export const aiSettingsSchema = z.object({
@@ -763,6 +790,7 @@ export type KnowledgeFinding = z.infer<typeof knowledgeFindingSchema>;
 export type DocumentPack = z.infer<typeof documentPackSchema>;
 export type DocumentTheme = z.infer<typeof themeSchema>;
 export type CompanySettings = z.infer<typeof companySettingsSchema>;
+export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>;
 export type AiSettings = z.infer<typeof aiSettingsSchema>;
 export type AiUsage = z.infer<typeof aiUsageSchema>;
 export type SigningSettings = z.infer<typeof signingSettingsSchema>;

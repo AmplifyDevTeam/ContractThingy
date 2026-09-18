@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
+import { Reveal, RevealRow } from "@/components/motion/reveal-bound";
 
 export function BackLink({ href, label }: { href: string; label: string }) {
   return (
@@ -30,7 +31,7 @@ export function PageHeader({
   back?: { href: string; label: string };
 }) {
   return (
-    <div className="mb-8" data-reveal>
+    <Reveal className="mb-8">
       {back ? <BackLink href={back.href} label={back.label} /> : null}
       <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0 max-w-2xl">
@@ -44,7 +45,7 @@ export function PageHeader({
         </div>
         {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
       </div>
-    </div>
+    </Reveal>
   );
 }
 
@@ -58,11 +59,11 @@ export function EmptyState({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-start gap-3 rounded-md border border-dashed border-border px-6 py-16" data-reveal>
+    <Reveal className="flex flex-col items-start gap-3 rounded-md border border-dashed border-border px-6 py-16">
       <h2 className="font-display text-2xl tracking-tight">{title}</h2>
       <p className="max-w-md text-sm text-muted-foreground">{description}</p>
       {action}
-    </div>
+    </Reveal>
   );
 }
 
@@ -88,9 +89,8 @@ export function IndexRow({
   trailing?: React.ReactNode;
 }) {
   return (
-    <Link
+    <RevealRow
       href={href}
-      data-reveal-row
       className="group grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-baseline gap-4 border-b border-border py-4 first:border-t"
     >
       {n ? <span className="font-mono text-[11px] text-muted-foreground">{n}</span> : <span />}
@@ -101,6 +101,6 @@ export function IndexRow({
         {meta ? <span className="mt-1 block text-[13px] text-muted-foreground">{meta}</span> : null}
       </span>
       {trailing ? <span className="self-center">{trailing}</span> : null}
-    </Link>
+    </RevealRow>
   );
 }

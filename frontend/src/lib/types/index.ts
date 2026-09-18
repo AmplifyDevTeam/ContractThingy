@@ -43,4 +43,5 @@ export type {
   TemplateSection,
   TemplateVersion,
   WorkingSchedule,
+  WorkspaceSettings,
 } from "@/lib/validation/schemas";

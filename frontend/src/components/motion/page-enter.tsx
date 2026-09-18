@@ -47,7 +47,7 @@ export function PageEnter({ children }: { children: React.ReactNode }) {
   useReveal(rootRef, [pathname]);
 
   return (
-    <div ref={rootRef} className="min-h-0">
+    <div ref={rootRef} className="min-h-0" suppressHydrationWarning>
       {children}
     </div>
   );

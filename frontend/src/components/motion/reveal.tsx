@@ -1,16 +1,20 @@
 "use client";
 
-import { useLayoutEffect, type RefObject } from "react";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 import gsap from "gsap";
 import { prefersReducedMotion } from "@/components/motion/reduced-motion";
 
-function resetTargets(targets: HTMLElement[]) {
+function resetTargets(targets: Element[]) {
   if (!targets.length) return;
   gsap.killTweensOf(targets);
   gsap.set(targets, { clearProps: "opacity,transform,y", opacity: 1, y: 0 });
 }
 
-/** Animate `[data-reveal]` tiles and `[data-reveal-row]` rows inside a root. */
+/**
+ * Animate `[data-reveal]` / `[data-reveal-row]` inside a root.
+ * Runs in useLayoutEffect only after React commits — never from a MutationObserver
+ * (that raced hydration and caused the style mismatch overlay).
+ */
 export function useReveal(rootRef: RefObject<HTMLElement | null>, deps: unknown[] = []) {
   useLayoutEffect(() => {
     const root = rootRef.current;
@@ -19,7 +23,6 @@ export function useReveal(rootRef: RefObject<HTMLElement | null>, deps: unknown[
     const tiles = Array.from(root.querySelectorAll<HTMLElement>("[data-reveal]"));
     const rows = Array.from(root.querySelectorAll<HTMLElement>("[data-reveal-row]"));
     const all = [...tiles, ...rows];
-
     if (all.length === 0) return;
 
     if (prefersReducedMotion()) {
