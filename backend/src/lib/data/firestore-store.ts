@@ -87,6 +87,12 @@ export class FirestoreStore implements DataStore {
 
   private async ensureSeed(): Promise<void> {
     if (SEEDED.has(this.orgId)) return;
+    // Fast path: healthy org already has company settings — skip collection scans.
+    const company = await this.settingsCol().doc("company").get();
+    if (company.exists) {
+      SEEDED.add(this.orgId);
+      return;
+    }
     await this.repairBootstrap();
     SEEDED.add(this.orgId);
   }

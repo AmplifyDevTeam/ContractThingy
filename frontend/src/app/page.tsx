@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth/session";
+import { getSessionFromCookie } from "@/lib/auth/session";
 
 export default async function HomePage() {
-  const session = await getSession();
+  const session = await getSessionFromCookie();
   redirect(session ? "/dashboard" : "/login");
 }

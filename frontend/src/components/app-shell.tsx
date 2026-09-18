@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
 import { PageEnter } from "@/components/motion/page-enter";
+import { NavProgress } from "@/components/nav-progress";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { logoutAction } from "@/lib/actions/auth";
 import { getClientAuth } from "@/lib/firebase/client";
@@ -61,6 +62,7 @@ export function AppShell({
 
   return (
     <div className="min-h-screen bg-background lg:grid lg:h-dvh lg:grid-cols-[12rem_minmax(0,1fr)] lg:overflow-hidden">
+      <NavProgress />
       <aside className="hidden h-full min-h-0 flex-col overflow-hidden overscroll-none border-r border-border px-4 py-6 lg:flex">
         <Link href="/dashboard" className="block shrink-0">
           <BrandMark />
@@ -79,6 +81,7 @@ export function AppShell({
                     <Link
                       key={item.href}
                       href={item.href}
+                      prefetch
                       className={cn(
                         "group flex items-baseline gap-3 border-l-2 border-transparent py-1.5 pl-3 text-[14px] text-muted-foreground transition-colors hover:text-foreground",
                         active && "border-primary text-foreground",
@@ -132,6 +135,7 @@ export function AppShell({
             <Link
               key={item.href}
               href={item.href}
+              prefetch
               className={cn(
                 "shrink-0 text-[12px] text-muted-foreground",
                 (pathname === item.href || pathname.startsWith(`${item.href}/`)) && "text-foreground",
