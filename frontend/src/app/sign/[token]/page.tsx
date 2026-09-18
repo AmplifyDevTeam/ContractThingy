@@ -5,29 +5,54 @@ import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { BrandMark } from "@/components/brand-mark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { StepTransition } from "@/components/motion/step-transition";
 import { SignaturePad } from "@/components/signing/signature-pad";
-import { consentSigningAction, openSigningAction, recipientSignAction } from "@/lib/actions/signing";
+import {
+  consentSigningAction,
+  openSigningAction,
+  recipientSignAction,
+  sendSigningOtpAction,
+  verifySigningOtpAction,
+} from "@/lib/actions/signing";
 import { broadcastSigningEvent } from "@/components/documents/document-live-sync";
 
 type Payload = Awaited<ReturnType<typeof openSigningAction>>;
+type Stage = "otp" | "review" | "sign" | "done";
 
 export default function SignPage() {
   const params = useParams<{ token: string }>();
   const token = params.token;
   const [data, setData] = useState<Payload | undefined>(undefined);
   const [consent, setConsent] = useState(false);
-  const [stage, setStage] = useState<"review" | "sign" | "done">("review");
+  const [stage, setStage] = useState<Stage>("review");
   const [busy, setBusy] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
 
   useEffect(() => {
     void openSigningAction(token).then((payload) => {
       setData(payload);
-      if (payload?.finalized || payload?.recipientSignedAt) setStage("done");
+      if (payload?.finalized || payload?.recipientSignedAt) {
+        setStage("done");
+      } else if (payload?.requireOtp && !payload.otpVerified) {
+        setStage("otp");
+        void sendSigningOtpAction(token).catch(() => {
+          /* code may already have been emailed on send */
+        });
+      } else {
+        setStage("review");
+      }
     });
   }, [token]);
+
+  async function reload() {
+    const payload = await openSigningAction(token);
+    setData(payload);
+    return payload;
+  }
 
   if (data === undefined) {
     return (
@@ -71,6 +96,63 @@ export default function SignPage() {
     );
   }
 
+  if (stage === "otp") {
+    return (
+      <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
+        <BrandMark stacked />
+        <h1 className="font-display mt-8 text-[2rem] tracking-tight">Verify your email</h1>
+        <p className="mt-3 text-sm text-muted-foreground">
+          Enter the 6-digit code sent to confirm you can access {data.documentName}.
+        </p>
+        <div className="mt-8 space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="otp">Verification code</Label>
+            <Input
+              id="otp"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={otpCode}
+              onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              placeholder="000000"
+              className="tracking-[0.3em]"
+            />
+          </div>
+          <Button
+            className="w-full"
+            disabled={otpCode.length < 6 || busy}
+            onClick={() => {
+              setBusy(true);
+              void verifySigningOtpAction(token, otpCode)
+                .then(() => reload())
+                .then((payload) => {
+                  if (payload?.otpVerified || !payload?.requireOtp) setStage("review");
+                })
+                .catch((error: Error) => toast.error(error.message))
+                .finally(() => setBusy(false));
+            }}
+          >
+            Verify and continue
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              void sendSigningOtpAction(token)
+                .then(() => toast.success("Code sent"))
+                .catch((error: Error) => toast.error(error.message))
+                .finally(() => setBusy(false));
+            }}
+          >
+            Resend code
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-6 py-10">
       <div className="mb-8 flex items-start justify-between gap-4">
@@ -82,7 +164,11 @@ export default function SignPage() {
         </div>
         <ThemeToggle compact />
       </div>
-      <iframe title="Agreement" className="mb-6 h-[70vh] w-full rounded-md border border-border bg-muted" srcDoc={data.html} />
+      {data.html ? (
+        <iframe title="Agreement" className="mb-6 h-[70vh] w-full rounded-md border border-border bg-muted" srcDoc={data.html} />
+      ) : (
+        <p className="mb-6 text-sm text-muted-foreground">Agreement content unlocks after verification.</p>
+      )}
       <StepTransition stepKey={stage}>
         {stage === "review" ? (
           <div className="space-y-4 rounded-md border border-border p-5">

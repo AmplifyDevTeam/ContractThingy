@@ -147,6 +147,8 @@ export const orgUserSchema = z.object({
   role: z.enum(USER_ROLES),
   active: z.boolean().default(true),
   passwordHash: z.string().optional(),
+  firebaseUid: z.string().optional(),
+  authProvider: z.enum(["password", "google", "firebase"]).optional(),
   createdAt: z.string(),
   lastLoginAt: z.string().optional(),
 });
@@ -256,7 +258,7 @@ export const signatureConfigSchema = z.object({
   order: z.enum(SIGNING_ORDERS).default("recipient_first"),
   requireOtp: z.boolean().default(false),
   requireManagerApproval: z.boolean().default(false),
-  allowDraftDownload: z.boolean().default(true),
+  allowDraftDownload: z.boolean().default(false),
   expiryDays: z.number().int().positive().default(7),
   reminderSchedule: z.array(z.enum(["24h", "3d", "7d"])).default(["24h", "3d"]),
 });
@@ -472,6 +474,7 @@ export const signingRequestSchema = z.object({
   requireOtp: z.boolean().default(false),
   otpHash: z.string().optional(),
   otpExpiresAt: z.string().optional(),
+  otpVerifiedAt: z.string().optional(),
   expiresAt: z.string(),
   recipientSignedAt: z.string().optional(),
   companySignedAt: z.string().optional(),
@@ -634,7 +637,7 @@ export const signingSettingsSchema = z.object({
   defaultExpiryDays: z.number().int().positive().default(7),
   defaultOrder: z.enum(SIGNING_ORDERS).default("recipient_first"),
   requireOtpForClientAgreements: z.boolean().default(true),
-  allowDraftDownload: z.boolean().default(true),
+  allowDraftDownload: z.boolean().default(false),
 });
 
 export const emailSettingsSchema = z.object({

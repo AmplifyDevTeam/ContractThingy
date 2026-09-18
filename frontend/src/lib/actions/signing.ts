@@ -10,6 +10,7 @@ export type SigningPayload = {
   allowDraftDownload: boolean;
   status: string;
   requireOtp: boolean;
+  otpVerified: boolean;
   consentAcceptedAt?: string | null;
   recipientSignedAt?: string | null;
   finalized: boolean;
@@ -24,6 +25,14 @@ export async function openSigningAction(token: string): Promise<SigningPayload> 
 
 export async function consentSigningAction(token: string) {
   return apiPost<{ ok: true }>(`/sign/${token}/consent`);
+}
+
+export async function sendSigningOtpAction(token: string) {
+  return apiPost<{ ok: true }>(`/sign/${token}/otp/send`);
+}
+
+export async function verifySigningOtpAction(token: string, code: string) {
+  return apiPost<{ ok: true }>(`/sign/${token}/otp/verify`, { code });
 }
 
 export async function recipientSignAction(

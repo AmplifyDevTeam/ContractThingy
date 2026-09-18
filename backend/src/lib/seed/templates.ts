@@ -186,7 +186,7 @@ function template(
         order: "recipient_first",
         requireOtp: category === "CLIENT",
         requireManagerApproval: documentType.includes("executive") || documentType.includes("promotion"),
-        allowDraftDownload: true,
+        allowDraftDownload: false,
         expiryDays: 7,
         reminderSchedule: ["24h", "3d"],
       },

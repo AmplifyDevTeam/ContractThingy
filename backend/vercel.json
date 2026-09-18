@@ -1,7 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "hono",
+  "framework": null,
   "installCommand": "cd .. && npm install --workspace=backend",
-  "buildCommand": "npm run build:vercel",
-  "outputDirectory": "vercel-out"
+  "buildCommand": "npm run build:vercel && mkdir -p public",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/index" }
+  ]
 }

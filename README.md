@@ -39,7 +39,19 @@ npm run dev:api       # http://localhost:4000
 npm run dev:web       # http://localhost:3000
 ```
 
-Default local login (after seed): `admin@localhost` / `change-me-now`
+Default local login (password, when Firebase web config is empty): `admin@localhost` / `change-me-now`
+
+### Auth (Firebase Google + email)
+
+1. Firebase Console → **Authentication** → enable **Google** and **Email/Password**  
+2. Add authorized domains: `localhost`, your frontend `*.vercel.app`  
+3. Project settings → Web app → copy config into **frontend** env:  
+   `NEXT_PUBLIC_FIREBASE_API_KEY`, `AUTH_DOMAIN`, `PROJECT_ID`, `APP_ID`  
+4. Backend already needs Admin SDK (`FIREBASE_PROJECT_ID`, `CLIENT_EMAIL`, `PRIVATE_KEY`) to verify ID tokens  
+5. Signup policy on backend:  
+   - First user → `SUPER_ADMIN`  
+   - Production: keep `AUTH_OPEN_SIGNUP=false`; use `AUTH_ALLOWED_DOMAINS` and/or invite emails in Settings → Users  
+   - Password login is disabled in production unless `ALLOW_PASSWORD_LOGIN=true`  
 
 ## Production (Firebase + Vercel)
 
@@ -68,7 +80,10 @@ npx firebase deploy --only firestore:rules --project amplify-contractos
 | `SESSION_SECRET` | JWT signing |
 | `APP_URL` | Frontend public URL (signing links) |
 | `CORS_ORIGINS` | Frontend origin |
-| `BOOTSTRAP_ADMIN_EMAIL` / `PASSWORD` | First admin (set before first request) |
+| `BOOTSTRAP_ADMIN_EMAIL` / `PASSWORD` | Optional local password admin |
+| `AUTH_ALLOWED_DOMAINS` | e.g. `amplifymediatechnologies.com` |
+| `AUTH_OPEN_SIGNUP` | `true` to allow any Firebase user to join |
+| `AUTH_DEFAULT_ROLE` | Role for new self-signups (default `VIEWER`) |
 
 **Frontend** (`Root Directory: frontend`)
 
@@ -77,6 +92,7 @@ npx firebase deploy --only firestore:rules --project amplify-contractos
 | `API_URL` | Backend public URL |
 | `APP_URL` | This frontend’s URL |
 | `NEXT_PUBLIC_API_URL` | Same as `API_URL` if needed client-side |
+| `NEXT_PUBLIC_FIREBASE_*` | Web app config for Google / email Auth |
 
 After deploy: open `https://<backend>/health` once to seed → log in on the frontend.
 

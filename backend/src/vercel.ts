@@ -1,4 +1,9 @@
+import { handle } from "hono/vercel";
 import { createApp } from "./app";
 
-/** Vercel Hono entry — default export is the app. */
-export default createApp();
+export const config = {
+  runtime: "nodejs",
+  maxDuration: 60,
+};
+
+export default handle(createApp());

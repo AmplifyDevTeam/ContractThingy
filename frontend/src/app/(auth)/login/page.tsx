@@ -1,10 +1,7 @@
-import { loginAction } from "@/lib/actions/auth";
+import { LoginForm } from "@/components/auth/login-form";
 import { BrandMark } from "@/components/brand-mark";
 import { LoginEnter } from "@/components/motion/login-enter";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
 export default async function LoginPage({
   searchParams,
@@ -12,6 +9,10 @@ export default async function LoginPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const { error } = await searchParams;
+  const firebaseEnabled = Boolean(
+    process.env.NEXT_PUBLIC_FIREBASE_API_KEY && process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  );
+
   return (
     <LoginEnter>
       <div className="grid min-h-screen overflow-hidden lg:grid-cols-2">
@@ -32,7 +33,8 @@ export default async function LoginPage({
               The contract system for people and companies.
             </h1>
             <p className="mt-6 max-w-[44ch] text-[15px] leading-relaxed text-muted-foreground">
-              Approved templates, locked clauses, and a signing trail. Built for the records — not PDF form filling.
+              Approved templates, locked clauses, and a signing trail. Built for the records — not PDF form
+              filling.
             </p>
           </div>
           <p className="text-[12px] text-muted-foreground">Internal workspace</p>
@@ -48,30 +50,7 @@ export default async function LoginPage({
           `,
           }}
         >
-          <form action={loginAction} className="w-full max-w-[360px]">
-            <h2 className="font-display text-[2rem] tracking-tight">Sign in</h2>
-            <p className="mt-2 text-sm text-muted-foreground">Use your Amplify workspace account.</p>
-            <div className="mt-8 space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input id="email" name="email" type="email" autoComplete="username" required />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                />
-              </div>
-              {error ? <p className="text-sm text-destructive">Invalid email or password.</p> : null}
-              <Button type="submit" className="h-10 w-full">
-                Continue
-              </Button>
-            </div>
-          </form>
+          <LoginForm initialError={error} firebaseEnabled={firebaseEnabled} />
         </section>
       </div>
     </LoginEnter>

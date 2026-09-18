@@ -317,7 +317,7 @@ export function buildBootstrapState(_orgId: string): OrgState {
         defaultExpiryDays: 7,
         defaultOrder: "recipient_first",
         requireOtpForClientAgreements: true,
-        allowDraftDownload: true,
+        allowDraftDownload: false,
       },
       email: {
         fromName: AMPLIFY_COMPANY.displayName,

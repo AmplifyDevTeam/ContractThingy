@@ -1,11 +1,13 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
-import { corsOrigins, resolveAppUrl, geminiEnabled } from "@/lib/config";
+import { corsOrigins, resolveAppUrl, geminiEnabled, assertProductionConfig, passwordLoginEnabled } from "@/lib/config";
 import {
   SESSION_COOKIE,
   createSessionToken,
+  loginWithFirebaseIdToken,
   loginWithPassword,
+  hydrateSession,
   readSessionToken,
   requirePermissionFromToken,
   sessionFromAuthHeader,
@@ -15,6 +17,7 @@ import { AuthzError } from "@/lib/auth/permissions";
 import { getStore } from "@/lib/data/store";
 import { loadSecuritySettings, securityStatus, assertPasswordPolicy } from "@/lib/auth/security-settings";
 import { hashPassword } from "@/lib/auth/password";
+import { clientIp, publicErrorMessage, rateLimit } from "@/lib/security/guards";
 import { newId, nowIso } from "@/lib/ids";
 import { writeAudit } from "@/lib/services/audit-service";
 import {
@@ -32,6 +35,8 @@ import {
   acceptConsent,
   applyRecipientSignature,
   sendForSignature,
+  sendSigningOtp,
+  verifySigningOtp,
 } from "@/lib/services/signing-service";
 import { renderPdf } from "@/lib/services/pdf-service";
 import {
@@ -95,11 +100,17 @@ function tokenFromRequest(c: { req: { header: (name: string) => string | undefin
   );
 }
 
+function publicSigningRequest(request: SigningRequest) {
+  const { token: _t, otpHash: _o, ...safe } = request as SigningRequest & { token?: string };
+  return safe;
+}
+
 async function authed(c: { get: (k: "token") => string | null }, permission: Parameters<typeof requirePermissionFromToken>[1]) {
   return requirePermissionFromToken(c.get("token"), permission);
 }
 
 export function createApp() {
+  assertProductionConfig();
   const app = new Hono<Env>();
 
   app.use("*", cors({
@@ -112,14 +123,22 @@ export function createApp() {
   app.use("*", async (c, next) => {
     const token = tokenFromRequest(c);
     c.set("token", token);
-    c.set("session", token ? await readSessionToken(token) : null);
+    const raw = token ? await readSessionToken(token) : null;
+    c.set("session", raw ? await hydrateSession(raw) : null);
     await next();
   });
 
   app.onError((err, c) => {
-    if (err instanceof AuthzError) return c.json({ error: err.message }, 401);
-    const message = err instanceof Error ? err.message : "Request failed";
-    const status = message.toLowerCase().includes("not found") ? 404 : 400;
+    if (err instanceof AuthzError) {
+      const status = err.message.startsWith("Missing permission") ? 403 : 401;
+      return c.json({ error: err.message }, status);
+    }
+    const message = publicErrorMessage(err);
+    const status = message.toLowerCase().includes("not found")
+      ? 404
+      : message.includes("Too many")
+        ? 429
+        : 400;
     return c.json({ error: message }, status);
   });
 
@@ -127,8 +146,30 @@ export function createApp() {
 
   // ── Auth ──────────────────────────────────────────────────────────
   app.post("/auth/login", async (c) => {
+    const ip = clientIp(c.req.header("x-forwarded-for"));
+    const limited = rateLimit({ key: `login:${ip}`, limit: 20, windowMs: 15 * 60 * 1000 });
+    if (!limited.ok) throw new Error("Too many attempts. Try again later.");
+    if (!passwordLoginEnabled()) throw new Error("Password login is disabled");
     const body = await c.req.json<{ email?: string; password?: string }>();
     const session = await loginWithPassword(String(body.email ?? ""), String(body.password ?? ""));
+    const security = await loadSecuritySettings();
+    const token = await createSessionToken(session, { sessionDays: security.sessionDays });
+    setCookie(c, SESSION_COOKIE, token, {
+      httpOnly: true,
+      sameSite: "Lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: security.sessionDays * 24 * 60 * 60,
+    });
+    return c.json({ token, user: session });
+  });
+
+  app.post("/auth/firebase", async (c) => {
+    const ip = clientIp(c.req.header("x-forwarded-for"));
+    const limited = rateLimit({ key: `firebase:${ip}`, limit: 40, windowMs: 15 * 60 * 1000 });
+    if (!limited.ok) throw new Error("Too many attempts. Try again later.");
+    const body = await c.req.json<{ idToken?: string }>();
+    const session = await loginWithFirebaseIdToken(String(body.idToken ?? ""));
     const security = await loadSecuritySettings();
     const token = await createSessionToken(session, { sessionDays: security.sessionDays });
     setCookie(c, SESSION_COOKIE, token, {
@@ -318,7 +359,7 @@ export function createApp() {
       version,
       relationships,
       audits,
-      signing,
+      signing: signing.map(publicSigningRequest),
       relatedDocs,
       html,
       ai,
@@ -328,7 +369,7 @@ export function createApp() {
   });
 
   app.get("/documents/:id/pdf", async (c) => {
-    const actor = await authed(c, "documents.read");
+    const actor = await authed(c, "documents.pdf");
     const store = await getStore(actor.orgId);
     const document = await store.getDoc<ContractDocument>("documents", c.req.param("id"));
     if (!document) return c.json({ error: "Not found" }, 404);
@@ -627,14 +668,16 @@ export function createApp() {
     const ua = c.req.header("user-agent") ?? undefined;
     await markOpened(store, found.request, ip, ua);
     const signing = await store.getSettings<{ allowDraftDownload?: boolean }>("signing");
+    const canViewBody = !found.request.requireOtp || Boolean(found.request.otpVerifiedAt);
     return c.json({
       documentName: found.document.name,
       readableId: found.document.readableId,
       recipientName: found.request.recipientName,
-      html: found.version.snapshot.renderedHtml,
-      allowDraftDownload: signing.allowDraftDownload ?? true,
+      html: canViewBody ? found.version.snapshot.renderedHtml : "",
+      allowDraftDownload: (signing.allowDraftDownload ?? false) && canViewBody,
       status: found.document.status,
       requireOtp: found.request.requireOtp,
+      otpVerified: Boolean(found.request.otpVerifiedAt),
       consentAcceptedAt: found.request.consentAcceptedAt,
       recipientSignedAt: found.request.recipientSignedAt,
       finalized: found.document.status === "FINALIZED",
@@ -648,6 +691,9 @@ export function createApp() {
     const store = await getStore();
     const found = await getSigningByToken(store, c.req.param("token"));
     if (!found) throw new Error("Invalid or expired signing link");
+    if (found.request.requireOtp && !found.request.otpVerifiedAt) {
+      throw new Error("Email verification code is required before signing");
+    }
     await acceptConsent(
       store,
       found.request,
@@ -657,11 +703,31 @@ export function createApp() {
     return c.json({ ok: true });
   });
 
+  app.post("/sign/:token/otp/send", async (c) => {
+    const ip = clientIp(c.req.header("x-forwarded-for"));
+    const limited = rateLimit({ key: `otp-send:${ip}`, limit: 10, windowMs: 15 * 60 * 1000 });
+    if (!limited.ok) throw new Error("Too many attempts. Try again later.");
+    await sendSigningOtp(await getStore(), c.req.param("token"));
+    return c.json({ ok: true });
+  });
+
+  app.post("/sign/:token/otp/verify", async (c) => {
+    const ip = clientIp(c.req.header("x-forwarded-for"));
+    const limited = rateLimit({ key: `otp-verify:${ip}`, limit: 30, windowMs: 15 * 60 * 1000 });
+    if (!limited.ok) throw new Error("Too many attempts. Try again later.");
+    const body = z.object({ code: z.string().min(4).max(12) }).parse(await c.req.json());
+    await verifySigningOtp(await getStore(), c.req.param("token"), body.code);
+    return c.json({ ok: true });
+  });
+
   app.post("/sign/:token/sign", async (c) => {
     const store = await getStore();
     const found = await getSigningByToken(store, c.req.param("token"));
     if (!found) throw new Error("Invalid or expired signing link");
     if (!found.request.consentAcceptedAt) throw new Error("Consent is required before signing");
+    if (found.request.requireOtp && !found.request.otpVerifiedAt) {
+      throw new Error("Email verification code is required before signing");
+    }
     const body = z
       .object({ imageDataUrl: z.string().min(1), method: z.enum(["draw", "type"]) })
       .parse(await c.req.json());
@@ -744,7 +810,7 @@ export function createApp() {
     const actor = await authed(c, "signing.manage");
     const store = await getStore(actor.orgId);
     return c.json({
-      requests: await store.listDocs<SigningRequest>("signingRequests"),
+      requests: (await store.listDocs<SigningRequest>("signingRequests")).map(publicSigningRequest),
       documents: await store.listDocs<ContractDocument>("documents"),
     });
   });
@@ -777,7 +843,7 @@ export function createApp() {
     ]);
     return c.json({
       documents,
-      requests,
+      requests: requests.map(publicSigningRequest),
       people,
       companies,
       sources,
@@ -950,6 +1016,9 @@ export function createApp() {
         active: z.boolean().optional(),
       })
       .parse(await c.req.json());
+    if (body.role === "SUPER_ADMIN" && actor.role !== "SUPER_ADMIN") {
+      throw new Error("Only a SUPER_ADMIN can grant SUPER_ADMIN");
+    }
     const security = await loadSecuritySettings(store);
     assertPasswordPolicy(body.password, security);
     const users = await store.listDocs<OrgUser>("users");
@@ -983,6 +1052,18 @@ export function createApp() {
         active: z.boolean().optional(),
       })
       .parse(await c.req.json());
+    if (body.role === "SUPER_ADMIN" && actor.role !== "SUPER_ADMIN") {
+      throw new Error("Only a SUPER_ADMIN can grant SUPER_ADMIN");
+    }
+    const users = await store.listDocs<OrgUser>("users");
+    const superAdmins = users.filter((u) => u.role === "SUPER_ADMIN" && u.active);
+    const demotingSelf =
+      existing.role === "SUPER_ADMIN" &&
+      existing.active &&
+      ((body.role && body.role !== "SUPER_ADMIN") || body.active === false);
+    if (demotingSelf && superAdmins.length <= 1) {
+      throw new Error("Cannot remove or demote the last SUPER_ADMIN");
+    }
     if (body.password) {
       assertPasswordPolicy(body.password, await loadSecuritySettings(store));
     }

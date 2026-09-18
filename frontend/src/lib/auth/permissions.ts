@@ -7,6 +7,7 @@ export type Permission =
   | "companies.read"
   | "companies.write"
   | "documents.read"
+  | "documents.pdf"
   | "documents.create"
   | "documents.edit"
   | "documents.approve"
@@ -37,6 +38,7 @@ const ALL: Permission[] = [
   "companies.read",
   "companies.write",
   "documents.read",
+  "documents.pdf",
   "documents.create",
   "documents.edit",
   "documents.approve",
@@ -70,6 +72,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "companies.read",
     "companies.write",
     "documents.read",
+    "documents.pdf",
     "documents.create",
     "documents.edit",
     "documents.approve",
@@ -90,6 +93,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "people.read",
     "companies.read",
     "documents.read",
+    "documents.pdf",
     "templates.read",
     "templates.write",
     "clauses.read",
@@ -108,6 +112,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "people.read",
     "companies.read",
     "documents.read",
+    "documents.pdf",
     "documents.create",
     "documents.edit",
     "documents.approve",

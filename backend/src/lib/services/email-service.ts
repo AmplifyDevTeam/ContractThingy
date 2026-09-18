@@ -5,6 +5,7 @@ import type { EmailSettings } from "@/lib/types";
 export type EmailTemplateId =
   | "document_sent"
   | "signing_reminder"
+  | "signing_otp"
   | "recipient_signed"
   | "company_signature_required"
   | "agreement_completed"
@@ -149,6 +150,18 @@ const TEMPLATES: Record<EmailTemplateId, (data: Record<string, string>) => Email
        <p>This is a reminder to review and sign <strong>${data.documentName}</strong>.</p>
        <p><a class="btn" href="${data.signUrl}">Continue signing</a></p>`,
     ),
+  }),
+  signing_otp: (data) => ({
+    to: data.recipientEmail ?? "",
+    subject: `Verification code for ${data.documentName}`,
+    html: layout(
+      data,
+      `<p>Hello ${data.recipientName},</p>
+       <p>Your verification code for <strong>${data.documentName}</strong> is:</p>
+       <p style="font-size:28px;letter-spacing:.2em;font-weight:700;color:#D4FF4A">${data.otpCode}</p>
+       <p class="muted">This code expires in 10 minutes. Do not share it.</p>`,
+    ),
+    text: `Your verification code is ${data.otpCode}`,
   }),
   recipient_signed: (data) => ({
     to: data.to,

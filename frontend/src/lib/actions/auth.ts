@@ -5,6 +5,17 @@ import { redirect } from "next/navigation";
 import { apiPost, ApiError, SESSION_COOKIE } from "@/lib/api";
 import type { SessionUser } from "@/lib/auth/session";
 
+async function setSessionCookie(token: string) {
+  const jar = await cookies();
+  jar.set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 14 * 24 * 60 * 60,
+  });
+}
+
 export async function loginAction(formData: FormData) {
   const email = String(formData.get("email") ?? "");
   const password = String(formData.get("password") ?? "");
@@ -13,17 +24,27 @@ export async function loginAction(formData: FormData) {
       email,
       password,
     });
-    const jar = await cookies();
-    jar.set(SESSION_COOKIE, data.token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 14 * 24 * 60 * 60,
-    });
+    await setSessionCookie(data.token);
   } catch (error) {
-    if (error instanceof ApiError) redirect("/login?error=1");
+    if (error instanceof ApiError) redirect(`/login?error=${encodeURIComponent(error.message)}`);
     throw error;
+  }
+  redirect("/dashboard");
+}
+
+export async function loginWithFirebaseAction(
+  idToken: string,
+): Promise<{ ok: false; error: string } | void> {
+  try {
+    const data = await apiPost<{ token: string; user: SessionUser }>("/auth/firebase", {
+      idToken,
+    });
+    await setSessionCookie(data.token);
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return { ok: false, error: error.message };
+    }
+    return { ok: false, error: "Sign-in failed" };
   }
   redirect("/dashboard");
 }

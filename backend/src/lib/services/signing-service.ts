@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { requestAppUrl } from "@/lib/config";
 import { newId, nowIso, randomToken, sha256Hex } from "@/lib/ids";
+import { generateOtpCode, hashOtp, verifyOtpHash } from "@/lib/security/guards";
 import { assembleCurrentHtml } from "@/lib/services/document-service";
 import { writeAudit } from "@/lib/services/audit-service";
 import {
@@ -48,6 +49,35 @@ async function recordEvent(
   return event;
 }
 
+async function issueAndEmailOtp(
+  store: DataStore,
+  request: SigningRequest,
+  document: ContractDocument,
+): Promise<SigningRequest> {
+  const code = generateOtpCode();
+  const next: SigningRequest = {
+    ...request,
+    otpHash: hashOtp(code),
+    otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    otpVerifiedAt: undefined,
+  };
+  await store.setDoc("signingRequests", next);
+  const company = await store.getSettings<CompanySettings>("company");
+  await sendTemplatedEmail({
+    store,
+    to: request.recipientEmail,
+    template: "signing_otp",
+    data: {
+      recipientName: request.recipientName,
+      recipientEmail: request.recipientEmail,
+      documentName: document.name,
+      companyName: company.legalName,
+      otpCode: code,
+    },
+  });
+  return next;
+}
+
 export async function sendForSignature(
   store: DataStore,
   actor: SessionUser,
@@ -70,7 +100,8 @@ export async function sendForSignature(
     (item) => item.documentId === documentId && item.status !== "revoked" && item.status !== "completed",
   );
   for (const prior of existing) {
-    await store.setDoc("signingRequests", { ...prior, status: "revoked" });
+    const { token: _drop, ...rest } = prior as SigningRequest & { token?: string };
+    await store.setDoc("signingRequests", { ...rest, status: "revoked", token: undefined });
   }
 
   const templateVersion = await store.getDoc<TemplateVersion>(
@@ -93,7 +124,6 @@ export async function sendForSignature(
     documentId,
     tokenHash,
     tokenHint: token.slice(0, 6),
-    token,
     recipientName: recipient.name,
     recipientEmail: recipient.email,
     status: "pending",
@@ -106,6 +136,7 @@ export async function sendForSignature(
   };
 
   await store.setDoc("signingRequests", request);
+
   const next: ContractDocument = {
     ...document,
     status: "SENT",
@@ -152,6 +183,7 @@ export async function sendForSignature(
   };
 }
 
+/** Rotate signing token (hash-only storage) and return a fresh URL. */
 export async function getActiveSigningLink(
   store: DataStore,
   documentId: string,
@@ -170,11 +202,22 @@ export async function getActiveSigningLink(
     )
   ).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const request = requests[0];
-  if (!request?.token) return null;
+  if (!request) return null;
   if (new Date(request.expiresAt).getTime() < Date.now()) return null;
+
+  const token = randomToken(32);
+  const tokenHash = await sha256Hex(token);
+  const rotated: SigningRequest = {
+    ...request,
+    tokenHash,
+    tokenHint: token.slice(0, 6),
+    token: undefined,
+  };
+  await store.setDoc("signingRequests", rotated);
+
   const origin = options?.appUrl ?? (await requestAppUrl());
   return {
-    url: `${origin}/sign/${request.token}`,
+    url: `${origin}/sign/${token}`,
     recipientEmail: request.recipientEmail,
     recipientName: request.recipientName,
     emailDelivered: false,
@@ -201,6 +244,38 @@ export async function getSigningByToken(
     : null;
   if (!document || !version) return null;
   return { request, document, version };
+}
+
+export async function sendSigningOtp(store: DataStore, token: string) {
+  const found = await getSigningByToken(store, token);
+  if (!found) throw new Error("Invalid or expired signing link");
+  if (!found.request.requireOtp) throw new Error("Verification is not required for this agreement");
+  await issueAndEmailOtp(store, found.request, found.document);
+  return { ok: true as const };
+}
+
+export async function verifySigningOtp(store: DataStore, token: string, code: string) {
+  const found = await getSigningByToken(store, token);
+  if (!found) throw new Error("Invalid or expired signing link");
+  if (!found.request.requireOtp) return { ok: true as const };
+  if (!found.request.otpExpiresAt || new Date(found.request.otpExpiresAt).getTime() < Date.now()) {
+    throw new Error("Invalid or expired verification code");
+  }
+  if (!verifyOtpHash(code, found.request.otpHash)) {
+    throw new Error("Invalid or expired verification code");
+  }
+  const now = nowIso();
+  await store.setDoc("signingRequests", {
+    ...found.request,
+    otpVerifiedAt: now,
+    otpHash: undefined,
+  });
+  await recordEvent(store, {
+    request: found.request,
+    type: "otp_verified",
+    identity: found.request.recipientEmail,
+  });
+  return { ok: true as const };
 }
 
 export async function markOpened(
@@ -253,6 +328,9 @@ export async function applyRecipientSignature(
     if (current.recipientSignedAt) throw new Error("This party has already signed");
     if (current.status === "revoked") throw new Error("This signing link has been revoked");
     if (new Date(current.expiresAt).getTime() < Date.now()) throw new Error("This signing link has expired");
+    if (current.requireOtp && !current.otpVerifiedAt) {
+      throw new Error("Email verification code is required before signing");
+    }
 
     const now = nowIso();
     const path = `organizations/${tx.orgId}/documents/${current.documentId}/signatures/${current.id}-recipient.png`;
