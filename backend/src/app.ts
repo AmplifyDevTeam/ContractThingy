@@ -110,7 +110,6 @@ async function authed(c: { get: (k: "token") => string | null }, permission: Par
 }
 
 export function createApp() {
-  assertProductionConfig();
   const app = new Hono<Env>();
 
   app.use("*", cors({
@@ -142,7 +141,17 @@ export function createApp() {
     return c.json({ error: message }, status);
   });
 
-  app.get("/health", (c) => c.json({ ok: true, service: "amplify-contractos-api" }));
+  app.get("/health", (c) => {
+    try {
+      assertProductionConfig();
+    } catch (err) {
+      return c.json(
+        { ok: false, service: "amplify-contractos-api", error: err instanceof Error ? err.message : "misconfigured" },
+        503,
+      );
+    }
+    return c.json({ ok: true, service: "amplify-contractos-api" });
+  });
 
   // ── Auth ──────────────────────────────────────────────────────────
   app.post("/auth/login", async (c) => {

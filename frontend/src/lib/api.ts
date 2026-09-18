@@ -53,12 +53,14 @@ export async function apiFetch<T>(
   }
 
   if (!res.ok) {
-    let message = res.statusText;
+    let message = res.statusText || `Request failed (${res.status})`;
     try {
       const data = (await res.json()) as { error?: string };
       if (data.error) message = data.error;
     } catch {
-      /* ignore */
+      if (res.status === 404) {
+        message = "API not found — check API_URL points at the backend deployment";
+      }
     }
     throw new ApiError(res.status, message);
   }
