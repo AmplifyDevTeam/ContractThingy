@@ -32,6 +32,26 @@ export async function loginAction(formData: FormData) {
   redirect("/dashboard");
 }
 
+/** Workspace password login (bootstrap admin / invited password users). */
+export async function loginWithPasswordAction(
+  email: string,
+  password: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const data = await apiPost<{ token: string; user: SessionUser }>("/auth/login", {
+      email,
+      password,
+    });
+    await setSessionCookie(data.token);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return { ok: false, error: error.message };
+    }
+    return { ok: false, error: "Sign-in failed" };
+  }
+}
+
 /** Exchange a Firebase ID token for an app session cookie. Caller navigates on success. */
 export async function loginWithFirebaseAction(
   idToken: string,

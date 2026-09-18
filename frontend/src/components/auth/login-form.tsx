@@ -9,7 +9,7 @@ import {
   signInWithRedirect,
   updateProfile,
 } from "firebase/auth";
-import { loginAction, loginWithFirebaseAction } from "@/lib/actions/auth";
+import { loginAction, loginWithFirebaseAction, loginWithPasswordAction } from "@/lib/actions/auth";
 import { getClientAuth, googleProvider, isFirebaseClientConfigured } from "@/lib/firebase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,9 +17,14 @@ import { Label } from "@/components/ui/label";
 
 type Mode = "signin" | "signup";
 
+function firebaseErrorCode(error: unknown): string {
+  return typeof error === "object" && error && "code" in error
+    ? String((error as { code: string }).code)
+    : "";
+}
+
 function firebaseErrorMessage(error: unknown): string {
-  const code = typeof error === "object" && error && "code" in error ? String((error as { code: string }).code) : "";
-  switch (code) {
+  switch (firebaseErrorCode(error)) {
     case "auth/popup-closed-by-user":
     case "auth/cancelled-popup-request":
       return "Sign-in cancelled.";
@@ -28,6 +33,7 @@ function firebaseErrorMessage(error: unknown): string {
     case "auth/email-already-in-use":
       return "That email already has an account. Sign in instead.";
     case "auth/invalid-credential":
+    case "auth/invalid-email":
     case "auth/wrong-password":
     case "auth/user-not-found":
       return "Invalid email or password.";
@@ -35,6 +41,8 @@ function firebaseErrorMessage(error: unknown): string {
       return "Password must be at least 6 characters.";
     case "auth/unauthorized-domain":
       return "This domain is not authorized in Firebase Auth settings.";
+    case "auth/operation-not-allowed":
+      return "That sign-in method is disabled in Firebase Auth.";
     default:
       return error instanceof Error ? error.message : "Sign-in failed.";
   }
@@ -92,19 +100,11 @@ export function LoginForm({
     try {
       const auth = getClientAuth();
       if (!auth) throw new Error("Firebase Auth is not configured");
-      // Prefer redirect in production — Vercel COOP often breaks the Google popup.
-      if (process.env.NODE_ENV === "production") {
-        await signInWithRedirect(auth, googleProvider());
-        return;
-      }
       try {
         await signInWithPopup(auth, googleProvider());
         await exchangeFirebaseSession();
       } catch (popupErr) {
-        const code =
-          typeof popupErr === "object" && popupErr && "code" in popupErr
-            ? String((popupErr as { code: string }).code)
-            : "";
+        const code = firebaseErrorCode(popupErr);
         // COOP / popup blockers — fall back to full-page redirect.
         if (
           code === "auth/popup-blocked" ||
@@ -135,13 +135,39 @@ export function LoginForm({
     try {
       const auth = getClientAuth();
       if (!auth) throw new Error("Firebase Auth is not configured");
+
       if (mode === "signup") {
         const cred = await createUserWithEmailAndPassword(auth, email, password);
         if (displayName) await updateProfile(cred.user, { displayName });
-      } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        await exchangeFirebaseSession();
+        return;
       }
-      await exchangeFirebaseSession();
+
+      // Prefer Firebase email users; fall back to workspace password accounts
+      // (e.g. BOOTSTRAP_ADMIN / admin@localhost) which are not Firebase users.
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+        await exchangeFirebaseSession();
+      } catch (firebaseErr) {
+        const code = firebaseErrorCode(firebaseErr);
+        if (
+          code !== "auth/invalid-credential" &&
+          code !== "auth/user-not-found" &&
+          code !== "auth/wrong-password" &&
+          code !== "auth/invalid-email"
+        ) {
+          throw firebaseErr;
+        }
+        const result = await loginWithPasswordAction(email, password);
+        if (!result.ok) {
+          throw new Error(
+            result.error === "Password login is disabled"
+              ? "Workspace password login is disabled. Use Google, or set ALLOW_PASSWORD_LOGIN=true on the API."
+              : result.error,
+          );
+        }
+        window.location.assign("/dashboard");
+      }
     } catch (err) {
       setError(firebaseErrorMessage(err));
     } finally {
@@ -188,7 +214,7 @@ export function LoginForm({
         {mode === "signup" ? "Create account" : "Sign in"}
       </h2>
       <p className="mt-2 text-sm text-muted-foreground">
-        Use Google or email — same Amplify workspace either way.
+        Google for Firebase accounts. Email also accepts workspace password users (bootstrap admin).
       </p>
 
       <Button
