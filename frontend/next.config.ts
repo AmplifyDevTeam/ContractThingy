@@ -20,6 +20,17 @@ const nextConfig: NextConfig = {
       allowedOrigins: lanOrigins,
     },
   },
+  // Allow Firebase Google popup to close and return the credential.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

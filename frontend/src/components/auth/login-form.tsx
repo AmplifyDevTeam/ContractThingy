@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   createUserWithEmailAndPassword,
+  getRedirectResult,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   updateProfile,
 } from "firebase/auth";
 import { loginAction, loginWithFirebaseAction } from "@/lib/actions/auth";
@@ -19,7 +21,10 @@ function firebaseErrorMessage(error: unknown): string {
   const code = typeof error === "object" && error && "code" in error ? String((error as { code: string }).code) : "";
   switch (code) {
     case "auth/popup-closed-by-user":
+    case "auth/cancelled-popup-request":
       return "Sign-in cancelled.";
+    case "auth/popup-blocked":
+      return "Popup blocked — try again, or allow popups for this site.";
     case "auth/email-already-in-use":
       return "That email already has an account. Sign in instead.";
     case "auth/invalid-credential":
@@ -57,17 +62,48 @@ export function LoginForm({
     }
   }
 
+  useEffect(() => {
+    if (!configured) return;
+    const auth = getClientAuth();
+    if (!auth) return;
+    setBusy(true);
+    void getRedirectResult(auth)
+      .then(async (cred) => {
+        if (!cred) return;
+        await exchangeFirebaseSession();
+      })
+      .catch((err) => setError(firebaseErrorMessage(err)))
+      .finally(() => setBusy(false));
+  }, [configured]);
+
   async function onGoogle() {
     setError("");
     setBusy(true);
     try {
       const auth = getClientAuth();
       if (!auth) throw new Error("Firebase Auth is not configured");
-      await signInWithPopup(auth, googleProvider());
-      await exchangeFirebaseSession();
+      try {
+        await signInWithPopup(auth, googleProvider());
+        await exchangeFirebaseSession();
+      } catch (popupErr) {
+        const code =
+          typeof popupErr === "object" && popupErr && "code" in popupErr
+            ? String((popupErr as { code: string }).code)
+            : "";
+        // COOP / popup blockers — fall back to full-page redirect.
+        if (
+          code === "auth/popup-blocked" ||
+          code === "auth/popup-closed-by-user" ||
+          code === "auth/cancelled-popup-request" ||
+          String(popupErr).includes("Cross-Origin-Opener-Policy")
+        ) {
+          await signInWithRedirect(auth, googleProvider());
+          return;
+        }
+        throw popupErr;
+      }
     } catch (err) {
       setError(firebaseErrorMessage(err));
-    } finally {
       setBusy(false);
     }
   }
