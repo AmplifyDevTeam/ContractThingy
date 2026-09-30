@@ -10,40 +10,43 @@ import { clearShellBrandingCache, useShellBranding } from "@/lib/branding/shell-
 import { getClientAuth } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth/session";
+import { hasPermission, type Permission } from "@/lib/auth/permissions";
 import { signOut } from "firebase/auth";
 
-const GROUPS = [
+type NavItem = { n: string; href: string; label: string; permission: Permission };
+
+const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: "Workspace",
     items: [
-      { n: "01", href: "/dashboard", label: "Dashboard" },
-      { n: "02", href: "/documents", label: "Documents" },
-      { n: "03", href: "/generate", label: "Generate" },
+      { n: "01", href: "/dashboard", permission: "documents.read", label: "Dashboard" },
+      { n: "02", href: "/documents", permission: "documents.read", label: "Documents" },
+      { n: "03", href: "/generate", permission: "documents.create", label: "Generate" },
     ],
   },
   {
     label: "Records",
     items: [
-      { n: "04", href: "/people", label: "People" },
-      { n: "05", href: "/companies", label: "Clients" },
+      { n: "04", href: "/people", permission: "people.read", label: "People" },
+      { n: "05", href: "/companies", permission: "companies.read", label: "Clients" },
     ],
   },
   {
     label: "Library",
     items: [
-      { n: "06", href: "/templates", label: "Templates" },
-      { n: "07", href: "/clauses", label: "Clauses" },
-      { n: "08", href: "/packs", label: "Packs" },
-      { n: "09", href: "/knowledge", label: "Knowledge" },
+      { n: "06", href: "/templates", permission: "templates.read", label: "Templates" },
+      { n: "07", href: "/clauses", permission: "clauses.read", label: "Clauses" },
+      { n: "08", href: "/packs", permission: "packs.read", label: "Packs" },
+      { n: "09", href: "/knowledge", permission: "knowledge.read", label: "Knowledge" },
     ],
   },
   {
     label: "Control",
     items: [
-      { n: "10", href: "/signatures", label: "Signatures" },
-      { n: "11", href: "/approvals", label: "Approvals" },
-      { n: "12", href: "/audit", label: "Audit" },
-      { n: "13", href: "/settings", label: "Settings" },
+      { n: "10", href: "/signatures", permission: "signing.manage", label: "Signatures" },
+      { n: "11", href: "/approvals", permission: "documents.approve", label: "Approvals" },
+      { n: "12", href: "/audit", permission: "audit.read", label: "Audit" },
+      { n: "13", href: "/settings", permission: "settings.read", label: "Settings" },
     ],
   },
 ];
@@ -59,6 +62,11 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const branding = useShellBranding();
+  const groups = GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => hasPermission(user.role, item.permission)),
+  })).filter((group) => group.items.length > 0);
+  const flat = groups.flatMap((group) => group.items);
   const current = FLAT.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
   const mark = (
     <BrandMark
@@ -85,7 +93,7 @@ export function AppShell({
           aria-label="Primary"
           className="mt-6 min-h-0 flex-1 space-y-7 overflow-y-auto overscroll-contain"
         >
-          {GROUPS.map((group) => (
+          {groups.map((group) => (
             <div key={group.label}>
               <div className="mb-2 px-2.5 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
                 {group.label}
@@ -97,7 +105,7 @@ export function AppShell({
                     <Link
                       key={item.href}
                       href={item.href}
-                      prefetch
+                      prefetch={false}
                       className={cn(
                         "group flex items-baseline gap-2.5 rounded-md py-1.5 pr-2 pl-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground",
                         active && "bg-sidebar-accent text-foreground",
@@ -166,11 +174,11 @@ export function AppShell({
           </div>
         </header>
         <div className="flex gap-3 overflow-x-auto border-b border-border px-4 py-2.5 lg:hidden">
-          {FLAT.map((item) => (
+          {flat.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              prefetch
+              prefetch={false}
               className={cn(
                 "shrink-0 text-[12px] text-muted-foreground",
                 (pathname === item.href || pathname.startsWith(`${item.href}/`)) && "text-foreground",

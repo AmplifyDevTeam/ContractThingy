@@ -5,8 +5,8 @@ import { IndexRow, PageHeader } from "@/components/page-header";
 import { Bento, MetaList, Stat, Tile, TileLink } from "@/components/bento";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { requirePermission } from "@/lib/auth/session";
-import { hasPermission, redactPerson } from "@/lib/auth/permissions";
+import { can, requirePermission } from "@/lib/auth/session";
+import { canSeeSensitive, hasPermission, redactPerson, redactSource } from "@/lib/auth/permissions";
 import { apiGet } from "@/lib/api";
 import type { ContractDocument, DocumentRelationship, Person, SourceDocument } from "@/lib/types";
 import { readSourceAnalysis, TYPE_LABELS } from "@/lib/knowledge/library";
@@ -21,8 +21,12 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
     notFound();
   }
   const person = redactPerson(payload.person, session.role);
+  const canCreate = can(session, "documents.create");
+  const canEdit = can(session, "people.write");
+  const canSources = can(session, "knowledge.read");
   const documents = [...payload.documents].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const sources = payload.sources;
+  const sources = payload.sources.map((source) => redactSource(source, session.role));
+  const showPay = canSeeSensitive(session.role);
   const related: DocumentRelationship[] = [];
 
   return (
@@ -40,15 +44,17 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
                 <Link href={`/people/${id}/edit`}>Edit</Link>
               </Button>
             ) : null}
-            <Button asChild>
-              <Link href={`/generate`}>Generate document</Link>
-            </Button>
+            {canCreate ? (
+              <Button asChild>
+                <Link href={`/generate`}>Generate document</Link>
+              </Button>
+            ) : null}
           </div>
         }
       />
 
       <Bento className="md:grid-rows-[auto_auto]">
-        <Tile kicker="Identity" span={2} rowSpan={2} action={<TileLink href={`/people/${id}/edit`}>Edit</TileLink>}>
+        <Tile kicker="Identity" span={2} rowSpan={2} action={canEdit ? <TileLink href={`/people/${id}/edit`}>Edit</TileLink> : undefined}>
           <p className="font-display mt-4 text-[2.5rem] leading-none tracking-tight">{person.fullLegalName}</p>
           <p className="mt-3 text-sm text-muted-foreground">
             {person.email}
@@ -69,7 +75,7 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
         </Tile>
         <Tile kicker="Compensation">
           <Stat
-            value={`${person.salaryCurrency} ${person.currentSalary.toLocaleString()}`}
+            value={showPay ? `${person.salaryCurrency} ${person.currentSalary.toLocaleString()}` : "Restricted"}
             size="md"
             hint={person.employmentStatus.replaceAll("_", " ")}
           />
@@ -100,9 +106,11 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
                             ) : null}
                           </div>
                         </div>
-                        <a href={`/api/knowledge/${source.id}/pdf`} className="font-mono text-[11px] text-muted-foreground hover:text-foreground">
-                          Open PDF
-                        </a>
+                        {canSources ? (
+                          <a href={`/api/knowledge/${source.id}/pdf`} className="font-mono text-[11px] text-muted-foreground hover:text-foreground">
+                            Open PDF
+                          </a>
+                        ) : null}
                       </div>
                     </div>
                   );
@@ -115,7 +123,7 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
 
       <div className="mt-3">
         <Bento>
-          <Tile kicker="Employment history" span={2} action={<TileLink href="/generate">Generate</TileLink>}>
+          <Tile kicker="Employment history" span={2} action={canCreate ? <TileLink href="/generate">Generate</TileLink> : undefined}>
             <div className="mt-2">
               {documents.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">No generated documents yet.</p> : null}
               {documents.map((doc, index) => (

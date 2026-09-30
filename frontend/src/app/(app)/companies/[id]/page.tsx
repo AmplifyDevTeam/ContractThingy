@@ -5,13 +5,15 @@ import { IndexRow, PageHeader } from "@/components/page-header";
 import { Bento, MetaList, Stat, Tile, TileLink } from "@/components/bento";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { requirePermission } from "@/lib/auth/session";
+import { can, requirePermission } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api";
 import type { CompanyRecord, ContractDocument, SourceDocument } from "@/lib/types";
 import { readSourceAnalysis, TYPE_LABELS } from "@/lib/knowledge/library";
 
 export default async function CompanyPage({ params }: { params: Promise<{ id: string }> }) {
-  await requirePermission("companies.read");
+  const session = await requirePermission("companies.read");
+  const canCreate = can(session, "documents.create");
+  const canSources = can(session, "knowledge.read");
   const { id } = await params;
   let payload: { company: CompanyRecord; documents: ContractDocument[]; sources: SourceDocument[] };
   try {
@@ -31,14 +33,16 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
         title={company.legalName}
         description={`${company.primaryContact} · ${company.email}`}
         actions={
-          <Button asChild>
-            <Link href="/generate">Generate document</Link>
-          </Button>
+          canCreate ? (
+            <Button asChild>
+              <Link href="/generate">Generate document</Link>
+            </Button>
+          ) : null
         }
       />
 
       <Bento className="md:grid-rows-[auto_auto]">
-        <Tile kicker="Client" span={2} rowSpan={2} action={<TileLink href="/generate">Generate</TileLink>}>
+        <Tile kicker="Client" span={2} rowSpan={2} action={canCreate ? <TileLink href="/generate">Generate</TileLink> : undefined}>
           <p className="font-display mt-4 text-[2.5rem] leading-none tracking-tight">{company.legalName}</p>
           <p className="mt-3 text-sm text-muted-foreground">{company.displayName !== company.legalName ? company.displayName : company.primaryContact}</p>
           <MetaList
@@ -82,9 +86,11 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
                             ) : null}
                           </div>
                         </div>
-                        <a href={`/api/knowledge/${source.id}/pdf`} className="font-mono text-[11px] text-muted-foreground hover:text-foreground">
-                          Open PDF
-                        </a>
+                        {canSources ? (
+                          <a href={`/api/knowledge/${source.id}/pdf`} className="font-mono text-[11px] text-muted-foreground hover:text-foreground">
+                            Open PDF
+                          </a>
+                        ) : null}
                       </div>
                     </div>
                   );
@@ -97,7 +103,7 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
 
       <div className="mt-3">
         <Bento>
-          <Tile kicker="Contract history" span={3} action={<TileLink href="/generate">New</TileLink>}>
+          <Tile kicker="Contract history" span={3} action={canCreate ? <TileLink href="/generate">New</TileLink> : undefined}>
             <div className="mt-2">
               {documents.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">No documents yet for this client.</p> : null}
               {documents.map((doc, index) => (

@@ -17,7 +17,7 @@ export function randomToken(bytes = 32): string {
 
 export async function sha256Hex(input: string | Uint8Array): Promise<string> {
   const data = typeof input === "string" ? new TextEncoder().encode(input) : input;
-  const digest = await crypto.subtle.digest("SHA-256", data as BufferSource);
+  const digest = await crypto.subtle.digest("SHA-256", data as Uint8Array<ArrayBuffer>);
   return Buffer.from(digest).toString("hex");
 }
 

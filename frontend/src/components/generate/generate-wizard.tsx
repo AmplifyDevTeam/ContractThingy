@@ -12,6 +12,8 @@ import { Switch } from "@/components/ui/switch";
 import { BackLink } from "@/components/page-header";
 import { StepTransition } from "@/components/motion/step-transition";
 import { assembleDocument } from "@/lib/render/assemble";
+import { brandingAssetSrc, resolveBrandingAssets } from "@/lib/branding/identity";
+import { publicApiBase } from "@/lib/branding/public-api";
 import { recommendDocumentType } from "@/lib/rules/engine";
 import { generateAction, recommendAction, createPersonAction, createCompanyAction } from "@/lib/actions/workspace";
 import { recommendFromClientHistory, recommendFromPersonHistory } from "@/lib/knowledge/library";
@@ -44,7 +46,31 @@ type Catalog = {
   documents: ContractDocument[];
   sources: SourceDocument[];
   company: CompanySettings;
+  aiEnabled?: boolean;
 };
+
+function todayIso() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
+/** Preview iframes can't read stored branding paths — route them through the public API. */
+function previewAssets(company: CompanySettings, isDark: boolean) {
+  const resolved = resolveBrandingAssets(company, isDark);
+  const base = publicApiBase();
+  return {
+    logo: brandingAssetSrc(resolved.logo, base, isDark ? "dark" : "light"),
+    signature: resolved.signature,
+    seal: resolved.seal,
+  };
+}
+
+const WORK_MODE_OPTIONS = [
+  { value: "on_site", label: "On site" },
+  { value: "hybrid", label: "Hybrid" },
+  { value: "remote", label: "Remote" },
+] as const;
 
 const STEPS = [
   { n: "01", label: "Party" },
@@ -107,7 +133,7 @@ function defaultVars(company?: CompanySettings | null) {
     jobTitle: "Software Developer",
     department: "Engineering",
     reportingManager: "",
-    startDate: new Date().toISOString().slice(0, 10),
+    startDate: todayIso(),
     responsibilities: [
       "Design, build, and maintain internal and client-facing software",
       "Write tests and participate in code review",
@@ -168,13 +194,19 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
   const [recommending, setRecommending] = useState(false);
   const [vars, setVars] = useState(() => defaultVars(catalog.company));
   const [disabledClauseIds, setDisabledClauseIds] = useState<string[]>([]);
-  const [enabledOptional, setEnabledOptional] = useState<string[]>(["cl_remote_work"]);
+  const [enabledOptional, setEnabledOptional] = useState<string[]>(() =>
+    (catalog.company?.defaultWorkMode ?? "remote") !== "on_site" ? ["cl_remote_work"] : [],
+  );
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const [savingRecord, setSavingRecord] = useState(false);
   const [createdPeople, setCreatedPeople] = useState<Person[]>([]);
   const [createdCompanies, setCreatedCompanies] = useState<CompanyRecord[]>([]);
+  // One idempotency key per wizard session: retries after a timeout return the same document.
+  const [requestId, setRequestId] = useState(() =>
+    typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+  );
 
   const people = useMemo(() => {
     const ids = new Set(createdPeople.map((item) => item.id));
@@ -189,7 +221,10 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
   const client = companies.find((item) => item.id === companyId);
   const template = catalog.templates.find((item) => item.id === templateId);
   const templateVersion = catalog.templateVersions.find((item) => item.id === template?.currentVersionId);
+  // Same precedence as the server: company default design, then the template's design.
+  const themeId = catalog.company?.defaultThemeId ?? template?.themeId;
   const theme =
+    catalog.themes.find((item) => item.id === themeId) ??
     catalog.themes.find((item) => item.id === template?.themeId) ??
     catalog.themes[0] ??
     null;
@@ -200,6 +235,9 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
   const existingEmployment = catalog.documents.some(
     (doc) => doc.personId === personId && doc.family === "EMPLOYMENT" && doc.status === "FINALIZED",
   );
+  const historicalEmployment =
+    !isClient && Boolean(personId) && Boolean(recommendFromPersonHistory(catalog.sources ?? [], personId));
+  const hasEmploymentOnFile = existingEmployment || historicalEmployment;
 
   const showDocumentPreview = step >= 4 && Boolean(template && templateVersion && theme && company);
 
@@ -224,6 +262,7 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
       variables,
       enabledOptionalClauseIds: enabledOptional,
       disabledClauseIds,
+      resolveAssets: previewAssets,
     }).html;
   }, [showDocumentPreview, template, templateVersion, theme, company, vars, catalog, person, client, enabledOptional, disabledClauseIds, isClient]);
 
@@ -307,12 +346,16 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
           variables: isClient ? { ...vars, responsibilities: vars.services } : vars,
           enabledOptionalClauseIds: enabledOptional,
           disabledClauseIds,
-          themeId: template?.themeId,
+          requestId,
         }),
         new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error("Generation timed out. Refresh and try again.")), 20000);
+          setTimeout(
+            () => reject(new Error("Still generating — click Generate again in a moment; it will not create a duplicate.")),
+            60000,
+          );
         }),
       ]);
+      setRequestId(crypto.randomUUID());
       toast.success(`Generated ${document.readableId}`);
       router.push(`/documents/${document.id}`);
     } catch (error) {
@@ -330,12 +373,23 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
     setPersonId(record.id);
     const history = recommendFromPersonHistory(catalog.sources ?? [], record.id);
     const nextTitle = history?.analysis.role || record.currentJobTitle;
+    const profile = catalog.roleProfiles.find(
+      (item) => item.name.toLowerCase() === (nextTitle || "").trim().toLowerCase(),
+    );
+    // A past start date belongs to the old agreement; new documents default to today.
+    const recordStart = record.employmentStartDate || "";
+    const startDate = recordStart && recordStart > todayIso() ? recordStart : todayIso();
     setVars((current) => ({
       ...current,
       jobTitle: nextTitle || current.jobTitle,
-      department: record.department || current.department,
+      department: record.department || profile?.department || current.department,
       reportingManager: record.reportingManager || current.reportingManager,
-      startDate: record.employmentStartDate || current.startDate,
+      startDate,
+      responsibilities: profile?.suggestedResponsibilities?.length
+        ? profile.suggestedResponsibilities
+        : nextTitle && nextTitle.toLowerCase() !== current.jobTitle.toLowerCase()
+          ? []
+          : current.responsibilities,
       compensation: {
         ...current.compensation,
         salary: {
@@ -705,6 +759,12 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
 
           {step === 3 ? (
             <div className="mt-6">
+              {hasEmploymentOnFile && action === "hire" ? (
+                <p className="mb-4 border-l-2 border-primary pl-3 text-sm text-muted-foreground">
+                  {person?.fullLegalName ?? "This person"} already has an employment agreement on file. To change their
+                  role or pay, use Promote, Change salary, or Amend agreement instead of a new hire.
+                </p>
+              ) : null}
               {(isClient ? CLIENT_ACTIONS : EMPLOYEE_ACTIONS).map((option, index) => (
                 <OptionRow
                   key={option.value}
@@ -720,7 +780,7 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
 
           {step === 4 ? (
             <div className="mt-6">
-              {existingEmployment && action === "promote" ? (
+              {hasEmploymentOnFile && action === "promote" ? (
                 <p className="mb-4 border-l-2 border-primary pl-3 text-sm text-muted-foreground">
                   An existing employment agreement is on file. Promotion should amend rather than recreate it.
                 </p>
@@ -737,15 +797,17 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
                     onClick={() => setTemplateId(item.id)}
                   />
                 ))}
-              <Button
-                type="button"
-                variant="outline"
-                className="mt-5"
-                disabled={recommending}
-                onClick={() => void applyRecommendation()}
-              >
-                {recommending ? "Asking AI…" : "Refresh AI recommendation"}
-              </Button>
+              {catalog.aiEnabled ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-5"
+                  disabled={recommending}
+                  onClick={() => void applyRecommendation()}
+                >
+                  {recommending ? "Asking AI…" : "Refresh AI recommendation"}
+                </Button>
+              ) : null}
               {reasonSource === "ai" ? (
                 <AiCaption className="mt-3">AI suggestion — pick another approved template if it doesn’t fit.</AiCaption>
               ) : null}
@@ -784,7 +846,17 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
                   </Field>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <Field label="Job title">
-                      <Input value={vars.jobTitle} onChange={(e) => patch("jobTitle", e.target.value)} />
+                      <Input
+                        value={vars.jobTitle}
+                        onChange={(e) => {
+                          const title = e.target.value;
+                          patch("jobTitle", title);
+                          const role = catalog.roleProfiles.find(
+                            (item) => item.name.toLowerCase() === title.trim().toLowerCase(),
+                          );
+                          if (role?.suggestedResponsibilities?.length) patch("responsibilities", role.suggestedResponsibilities);
+                        }}
+                      />
                     </Field>
                     <Field label="Department">
                       <Input value={vars.department} onChange={(e) => patch("department", e.target.value)} />
@@ -918,22 +990,29 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
                       </Field>
                     </div>
                   ) : null}
-                  <Toggle
-                    label="Remote work"
-                    checked={vars.remoteWork}
-                    onChange={(checked) => {
-                      patch("remoteWork", checked);
-                      patch("workingSchedule", {
-                        ...vars.workingSchedule,
-                        workMode: checked ? "remote" : "on_site",
-                      });
-                      setEnabledOptional((current) =>
-                        checked
-                          ? Array.from(new Set([...current, "cl_remote_work"]))
-                          : current.filter((id) => id !== "cl_remote_work"),
-                      );
-                    }}
-                  />
+                  <Field label="Work arrangement">
+                    <select
+                      className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
+                      value={vars.workingSchedule.workMode}
+                      onChange={(event) => {
+                        const mode = event.target.value as typeof vars.workingSchedule.workMode;
+                        const remote = mode !== "on_site";
+                        patch("remoteWork", remote);
+                        patch("workingSchedule", { ...vars.workingSchedule, workMode: mode });
+                        setEnabledOptional((current) =>
+                          remote
+                            ? Array.from(new Set([...current, "cl_remote_work"]))
+                            : current.filter((id) => id !== "cl_remote_work"),
+                        );
+                      }}
+                    >
+                      {WORK_MODE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <Field label="Start time">
                       <Input
@@ -1065,7 +1144,12 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
               <h2 className="font-display text-xl tracking-tight">Preview</h2>
               <span className="font-mono text-[11px] text-muted-foreground">{template?.name}</span>
             </div>
-            <iframe title="Document preview" className="min-h-[28rem] w-full flex-1 rounded-md border border-border bg-muted xl:min-h-0" srcDoc={preview} />
+            <iframe
+              title="Document preview"
+              sandbox=""
+              className="min-h-[28rem] w-full flex-1 rounded-md border border-border bg-muted xl:min-h-0"
+              srcDoc={preview}
+            />
           </div>
         ) : (
           <div className="flex h-full flex-col justify-between rounded-md border border-border px-8 py-8">

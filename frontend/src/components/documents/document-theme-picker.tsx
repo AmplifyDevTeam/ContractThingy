@@ -97,7 +97,7 @@ export function DocumentThemePicker({
     <div className="min-w-0 space-y-3">
       <p className="text-[12px] leading-relaxed text-muted-foreground">
         {locked
-          ? "Design is locked on voided documents."
+          ? "Design is locked once a document is sent, signed, or voided."
           : "Letterhead is chosen from Amplify’s set. When Gemini is on, the pick below is an AI suggestion."}
       </p>
 

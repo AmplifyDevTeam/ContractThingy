@@ -72,6 +72,13 @@ export type OrgState = {
 
 const LIBRARY_CREATED_AT = "2026-01-01T00:00:00.000Z";
 
+/**
+ * Bump when seeded library content (templates, clauses, themes, role profiles) changes.
+ * Firestore workspaces upsert the library once per revision; documents stay pinned to the
+ * exact clause versions they were generated with, so old agreements never change.
+ */
+export const LIBRARY_REVISION = 2;
+
 function bootstrapAdmin(): OrgUser {
   const email = (process.env.BOOTSTRAP_ADMIN_EMAIL ?? "").trim().toLowerCase();
   const password = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? "";

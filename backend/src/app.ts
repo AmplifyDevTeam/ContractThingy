@@ -12,11 +12,11 @@ import {
   sessionFromAuthHeader,
   type SessionUser,
 } from "@/lib/auth/session";
-import { AuthzError, assertPermission, type Permission } from "@/lib/auth/permissions";
+import { AuthzError, assertPermission, redactPerson, redactSource, type Permission } from "@/lib/auth/permissions";
 import { getStore } from "@/lib/data/store";
 import { loadSecuritySettings, securityStatus, assertPasswordPolicy } from "@/lib/auth/security-settings";
 import { hashPassword } from "@/lib/auth/password";
-import { clientIp, publicErrorMessage, rateLimit } from "@/lib/security/guards";
+import { publicErrorMessage, rateLimit, requestClient } from "@/lib/security/guards";
 import { firebaseAdminStatus } from "@/lib/firebase/admin";
 import { newId, nowIso } from "@/lib/ids";
 import { writeAudit } from "@/lib/services/audit-service";
@@ -34,11 +34,14 @@ import {
   markOpened,
   acceptConsent,
   applyRecipientSignature,
+  expireStaleRequests,
+  extendSigningLink,
+  revokeSigningLink,
   sendForSignature,
   sendSigningOtp,
   verifySigningOtp,
 } from "@/lib/services/signing-service";
-import { renderPdf } from "@/lib/services/pdf-service";
+import { PdfUnavailableError, printableHtml, renderPdf } from "@/lib/services/pdf-service";
 import {
   emailTransportStatus,
   loadEmailSettings,
@@ -111,7 +114,7 @@ function tokenFromRequest(c: { req: { header: (name: string) => string | undefin
 }
 
 function publicSigningRequest(request: SigningRequest) {
-  const { token: _t, otpHash: _o, ...safe } = request as SigningRequest & { token?: string };
+  const { token: _t, otpHash: _o, tokenEnc: _e, ...safe } = request as SigningRequest & { token?: string };
   return safe;
 }
 
@@ -129,7 +132,27 @@ function slimDocument(doc: ContractDocument) {
     companyId: doc.companyId,
     templateId: doc.templateId,
     currentVersionId: doc.currentVersionId,
+    documentType: doc.documentType,
+    themeId: doc.themeId,
   };
+}
+
+const EDITABLE_DESIGN_STATUSES = ["DRAFT", "CONFIGURING", "REVIEW_REQUIRED", "APPROVED", "READY_TO_SEND"];
+
+function frontendOrigin(c: { req: { header: (name: string) => string | undefined } }) {
+  const host = c.req.header("x-frontend-host") ?? c.req.header("x-forwarded-host") ?? c.req.header("host");
+  const proto = c.req.header("x-forwarded-proto");
+  return resolveAppUrl(host, proto);
+}
+
+function setSessionCookie(c: Parameters<typeof setCookie>[0], token: string, days: number) {
+  setCookie(c, SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: days * 24 * 60 * 60,
+  });
 }
 
 async function authed(
@@ -246,7 +269,7 @@ export function createApp() {
 
   // ── Auth ──────────────────────────────────────────────────────────
   app.post("/auth/login", async (c) => {
-    const ip = clientIp(c.req.header("x-forwarded-for"));
+    const { ip } = requestClient((name) => c.req.header(name));
     const limited = rateLimit({ key: `login:${ip}`, limit: 20, windowMs: 15 * 60 * 1000 });
     if (!limited.ok) throw new Error("Too many attempts. Try again later.");
     if (!passwordLoginEnabled()) throw new Error("Password login is disabled");
@@ -254,32 +277,20 @@ export function createApp() {
     const session = await loginWithPassword(String(body.email ?? ""), String(body.password ?? ""));
     const security = await loadSecuritySettings();
     const token = await createSessionToken(session, { sessionDays: security.sessionDays });
-    setCookie(c, SESSION_COOKIE, token, {
-      httpOnly: true,
-      sameSite: "Lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: security.sessionDays * 24 * 60 * 60,
-    });
-    return c.json({ token, user: session });
+    setSessionCookie(c, token, security.sessionDays);
+    return c.json({ token, user: session, maxAge: security.sessionDays * 24 * 60 * 60 });
   });
 
   app.post("/auth/firebase", async (c) => {
-    const ip = clientIp(c.req.header("x-forwarded-for"));
+    const { ip } = requestClient((name) => c.req.header(name));
     const limited = rateLimit({ key: `firebase:${ip}`, limit: 40, windowMs: 15 * 60 * 1000 });
     if (!limited.ok) throw new Error("Too many attempts. Try again later.");
     const body = await c.req.json<{ idToken?: string }>();
     const session = await loginWithFirebaseIdToken(String(body.idToken ?? ""));
     const security = await loadSecuritySettings();
     const token = await createSessionToken(session, { sessionDays: security.sessionDays });
-    setCookie(c, SESSION_COOKIE, token, {
-      httpOnly: true,
-      sameSite: "Lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: security.sessionDays * 24 * 60 * 60,
-    });
-    return c.json({ token, user: session });
+    setSessionCookie(c, token, security.sessionDays);
+    return c.json({ token, user: session, maxAge: security.sessionDays * 24 * 60 * 60 });
   });
 
   app.post("/auth/logout", (c) => {
@@ -293,18 +304,13 @@ export function createApp() {
     const session = await hydrateSession(raw);
     if (!session) return c.json({ error: "Authentication required" }, 401);
     c.set("hydratedSession", session);
-    // Remint cookie only when role/name drifted from the JWT (e.g. promotion).
-    if (session.role !== raw.role || session.displayName !== raw.displayName || session.email !== raw.email) {
+    // Remint when role/name drifted from the JWT (e.g. promotion) or when explicitly asked.
+    const drifted = session.role !== raw.role || session.displayName !== raw.displayName || session.email !== raw.email;
+    if (drifted || c.req.query("remint")) {
       const security = await loadSecuritySettings();
       const token = await createSessionToken(session, { sessionDays: security.sessionDays });
-      setCookie(c, SESSION_COOKIE, token, {
-        httpOnly: true,
-        sameSite: "Lax",
-        secure: process.env.NODE_ENV === "production",
-        path: "/",
-        maxAge: security.sessionDays * 24 * 60 * 60,
-      });
-      return c.json({ user: session, token });
+      setSessionCookie(c, token, security.sessionDays);
+      return c.json({ user: session, token, maxAge: security.sessionDays * 24 * 60 * 60 });
     }
     return c.json({ user: session });
   });
@@ -314,7 +320,7 @@ export function createApp() {
     const actor = await authed(c, "people.read");
     const store = await getStore(actor.orgId);
     const people = await store.listDocs<Person>("people");
-    return c.json({ people });
+    return c.json({ people: people.map((person) => redactPerson(person, actor.role)) });
   });
 
   app.get("/people/:id", async (c) => {
@@ -322,14 +328,20 @@ export function createApp() {
     const store = await getStore(actor.orgId);
     const person = await store.getDoc<Person>("people", c.req.param("id"));
     if (!person) return c.json({ error: "Not found" }, 404);
-    const documents = await store.queryDocs<ContractDocument>("documents", (item) => item.personId === person.id);
-    const sources = await store.queryDocs<SourceDocument>(
-      "sourceDocuments",
-      (item) =>
-        item.personId === person.id ||
-        String((item.analysisJson as { personId?: string } | undefined)?.personId ?? "") === person.id,
-    );
-    return c.json({ person, documents, sources });
+    const [documents, sources] = await Promise.all([
+      store.whereEquals<ContractDocument>("documents", "personId", person.id),
+      store.queryDocs<SourceDocument>(
+        "sourceDocuments",
+        (item) =>
+          item.personId === person.id ||
+          String((item.analysisJson as { personId?: string } | undefined)?.personId ?? "") === person.id,
+      ),
+    ]);
+    return c.json({
+      person: redactPerson(person, actor.role),
+      documents: documents.map(slimDocument),
+      sources: sources.map((source) => redactSource(source, actor.role)),
+    });
   });
 
   app.post("/people", async (c) => {
@@ -364,6 +376,7 @@ export function createApp() {
     const patch = z
       .object({
         firstName: z.string().optional(),
+        middleName: z.string().optional(),
         lastName: z.string().optional(),
         email: z.string().optional(),
         phone: z.string().optional(),
@@ -383,7 +396,14 @@ export function createApp() {
     const person: Person = {
       ...existing,
       ...patch,
-      fullLegalName: `${patch.firstName ?? existing.firstName} ${patch.lastName ?? existing.lastName}`.trim(),
+      fullLegalName: [
+        patch.firstName ?? existing.firstName,
+        patch.middleName ?? existing.middleName,
+        patch.lastName ?? existing.lastName,
+      ]
+        .map((part) => (part ?? "").trim())
+        .filter(Boolean)
+        .join(" "),
       updatedAt: nowIso(),
     };
     await store.setDoc("people", person);
@@ -412,7 +432,7 @@ export function createApp() {
     const store = await getStore(actor.orgId);
     const company = await store.getDoc<CompanyRecord>("companies", c.req.param("id"));
     if (!company) return c.json({ error: "Not found" }, 404);
-    const documents = await store.queryDocs<ContractDocument>("documents", (item) => item.companyId === company.id);
+    const documents = (await store.whereEquals<ContractDocument>("documents", "companyId", company.id)).map(slimDocument);
     const sources = await store.queryDocs<SourceDocument>(
       "sourceDocuments",
       (item) =>
@@ -458,21 +478,26 @@ export function createApp() {
     const id = c.req.param("id");
     const document = await store.getDoc<ContractDocument>("documents", id);
     if (!document) return c.json({ error: "Not found" }, 404);
-    const [version, relationships, audits, signing, ai, html] = await Promise.all([
+    const [version, relFrom, relTo, audits, rawSigning, ai, html] = await Promise.all([
       store.getDoc<DocumentVersion>("documentVersions", document.currentVersionId),
-      store.queryDocs<DocumentRelationship>(
-        "documentRelationships",
-        (item) => item.fromDocumentId === id || item.toDocumentId === id,
-      ),
-      store.queryDocs<AuditEvent>("auditEvents", (item) => item.entityId === id),
-      store.queryDocs<SigningRequest>("signingRequests", (item) => item.documentId === id),
+      store.whereEquals<DocumentRelationship>("documentRelationships", "fromDocumentId", id),
+      store.whereEquals<DocumentRelationship>("documentRelationships", "toDocumentId", id),
+      store.whereEquals<AuditEvent>("auditEvents", "entityId", id),
+      store.whereEquals<SigningRequest>("signingRequests", "documentId", id),
       store.getSettings<AiSettings>("ai"),
       assembleCurrentHtml(store, id),
     ]);
-    const relatedIds = relationships.flatMap((item) => [item.fromDocumentId, item.toDocumentId]);
-    const relatedDocs = await store.queryDocs<ContractDocument>("documents", (item) => relatedIds.includes(item.id));
+    const signing = await expireStaleRequests(store, rawSigning);
+    const relationships = [...relFrom, ...relTo];
+    const relatedIds = [...new Set(relationships.flatMap((item) => [item.fromDocumentId, item.toDocumentId]))].filter(
+      (other) => other !== id,
+    );
+    const relatedDocs = (
+      await Promise.all(relatedIds.map((other) => store.getDoc<ContractDocument>("documents", other)))
+    ).filter((item): item is ContractDocument => Boolean(item));
+    const current = (await store.getDoc<ContractDocument>("documents", id)) ?? document;
     return c.json({
-      document,
+      document: current,
       version,
       relationships,
       audits,
@@ -481,7 +506,7 @@ export function createApp() {
       html,
       ai,
       aiThemeEnabled: Boolean(geminiEnabled() && ai?.enabled && (ai.recommendThemes ?? true)),
-      canEditTheme: true,
+      canEditTheme: EDITABLE_DESIGN_STATUSES.includes(current.status),
     });
   });
 
@@ -490,14 +515,50 @@ export function createApp() {
     const store = await getStore(actor.orgId);
     const document = await store.getDoc<ContractDocument>("documents", c.req.param("id"));
     if (!document) return c.json({ error: "Not found" }, 404);
+    // A finalized agreement is served byte-for-byte from the stored, hashed file.
+    if (document.status === "FINALIZED" && document.finalPdfPath) {
+      const file = await store.getFile(document.finalPdfPath);
+      if (file && file.contentType === "application/pdf") {
+        return new Response(Buffer.from(file.bytes), {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="${document.readableId}-signed.pdf"`,
+            "X-Content-SHA256": document.sha256 ?? "",
+          },
+        });
+      }
+      if (file) return c.json({ error: "PDF rendering is unavailable on this deployment" }, 503);
+    }
     const html = await assembleCurrentHtml(store, document.id);
-    const pdf = await renderPdf(html);
-    return new Response(Buffer.from(pdf), {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${document.readableId}.pdf"`,
-      },
-    });
+    try {
+      const pdf = await renderPdf(html);
+      return new Response(Buffer.from(pdf), {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="${document.readableId}.pdf"`,
+        },
+      });
+    } catch (error) {
+      if (error instanceof PdfUnavailableError) {
+        return c.json({ error: error.message }, 503);
+      }
+      throw error;
+    }
+  });
+
+  /** Print-ready HTML of the stored agreement (browser "Save as PDF" fallback). */
+  app.get("/documents/:id/print", async (c) => {
+    const actor = await authed(c, "documents.pdf");
+    const store = await getStore(actor.orgId);
+    const document = await store.getDoc<ContractDocument>("documents", c.req.param("id"));
+    if (!document) return c.json({ error: "Not found" }, 404);
+    let html: string | null = null;
+    if (document.status === "FINALIZED" && document.finalPdfPath) {
+      const file = await store.getFile(document.finalPdfPath);
+      if (file && file.contentType.startsWith("text/html")) html = new TextDecoder().decode(file.bytes);
+    }
+    html ??= await assembleCurrentHtml(store, document.id);
+    return c.html(printableHtml(html));
   });
 
   app.get("/documents/:id/sync", async (c) => {
@@ -505,7 +566,7 @@ export function createApp() {
     const store = await getStore(actor.orgId);
     const document = await store.getDoc<ContractDocument>("documents", c.req.param("id"));
     if (!document) return c.json({ error: "Not found" }, 404);
-    const signing = await store.queryDocs<SigningRequest>("signingRequests", (item) => item.documentId === document.id);
+    const signing = await store.whereEquals<SigningRequest>("signingRequests", "documentId", document.id);
     const active = signing
       .filter((item) => item.status !== "revoked")
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
@@ -522,7 +583,9 @@ export function createApp() {
     const store = await getStore(actor.orgId);
     const document = await store.getDoc<ContractDocument>("documents", c.req.param("id"));
     if (!document) return c.json({ error: "Not found" }, 404);
-    if (document.status === "VOIDED") throw new Error("Voided documents cannot change design");
+    if (!EDITABLE_DESIGN_STATUSES.includes(document.status)) {
+      throw new Error("Design is locked once a document has been sent");
+    }
     const { themeId } = z.object({ themeId: z.enum(THEME_IDS) }).parse(await c.req.json());
     const themes = await store.listDocs<DocumentTheme>("themes");
     if (!themes.some((theme) => theme.id === themeId)) throw new Error("Unknown document design");
@@ -640,10 +703,8 @@ export function createApp() {
       }
     }
     if (!name || !email) throw new Error("Recipient name and email are required");
-    const host = c.req.header("x-frontend-host") ?? c.req.header("x-forwarded-host") ?? c.req.header("host");
-    const proto = c.req.header("x-forwarded-proto");
     const result = await sendForSignature(store, actor, c.req.param("id"), { name, email }, {
-      appUrl: resolveAppUrl(host, proto),
+      appUrl: frontendOrigin(c),
     });
     return c.json(result);
   });
@@ -651,12 +712,23 @@ export function createApp() {
   app.get("/documents/:id/signing-link", async (c) => {
     const actor = await authed(c, "documents.send");
     const store = await getStore(actor.orgId);
-    const host = c.req.header("x-frontend-host") ?? c.req.header("x-forwarded-host") ?? c.req.header("host");
-    const proto = c.req.header("x-forwarded-proto");
-    const link = await getActiveSigningLink(store, c.req.param("id"), {
-      appUrl: resolveAppUrl(host, proto),
-    });
+    const link = await getActiveSigningLink(store, c.req.param("id"), { appUrl: frontendOrigin(c) });
     return c.json({ link });
+  });
+
+  app.post("/signing/:requestId/revoke", async (c) => {
+    const actor = await authed(c, "documents.send");
+    const store = await getStore(actor.orgId);
+    await revokeSigningLink(store, actor, c.req.param("requestId"));
+    return c.json({ ok: true });
+  });
+
+  app.post("/signing/:requestId/extend", async (c) => {
+    const actor = await authed(c, "documents.send");
+    const store = await getStore(actor.orgId);
+    const { days } = z.object({ days: z.number().int().min(1).max(60) }).parse(await c.req.json());
+    await extendSigningLink(store, actor, c.req.param("requestId"), days);
+    return c.json({ ok: true });
   });
 
   app.post("/documents/:id/countersign", async (c) => {
@@ -665,7 +737,7 @@ export function createApp() {
     const body = z
       .object({ imageDataUrl: z.string().min(1), method: z.enum(["draw", "type"]) })
       .parse(await c.req.json());
-    await applyCompanySignature(store, actor, c.req.param("id"), body);
+    await applyCompanySignature(store, actor, c.req.param("id"), { ...body, appUrl: frontendOrigin(c) });
     return c.json({ ok: true });
   });
 
@@ -698,18 +770,20 @@ export function createApp() {
       store.listDocs<SourceDocument>("sourceDocuments"),
       store.listDocs<ContractDocument>("documents"),
     ]);
+    const ai = await store.getSettings<AiSettings>("ai");
     return c.json({
-      templates,
+      templates: templates.filter((item) => item.status !== "archived"),
       templateVersions,
       clauses,
       clauseVersions,
-      people,
+      people: people.map((person) => redactPerson(person, actor.role)),
       companies,
       themes,
       roleProfiles,
       company,
-      sources,
-      documents,
+      sources: sources.map((source) => redactSource(source, actor.role)),
+      documents: documents.map(slimDocument),
+      aiEnabled: Boolean(geminiEnabled() && ai?.enabled && ai.recommendTemplates),
     });
   });
 
@@ -746,16 +820,18 @@ export function createApp() {
         : input.personId
           ? recommendFromPersonHistory(sources, input.personId)
           : null;
-    const docs = await store.listDocs<ContractDocument>("documents");
-    const hasExisting = Boolean(
-      input.personId && docs.some((d) => d.personId === input.personId && d.family === "EMPLOYMENT"),
-    );
+    const docs = input.personId
+      ? await store.whereEquals<ContractDocument>("documents", "personId", input.personId)
+      : [];
+    const hasExisting =
+      docs.some((d) => d.family === "EMPLOYMENT" && d.status === "FINALIZED") ||
+      Boolean(input.personId && history);
     const deterministic = recommendDocumentType({
       partyType: input.partyType,
-      action: input.action as never,
+      action: input.action,
       hasExistingEmploymentAgreement: hasExisting,
-      jobTitle: input.jobTitle,
-      preferredTemplateId: history?.templateId,
+      historicalTemplateId: history?.templateId,
+      historicalReason: history?.reason,
     });
     const aiSettings = await store.getSettings<AiSettings>("ai");
     if (aiSettings.enabled && aiSettings.recommendTemplates) {
@@ -768,12 +844,12 @@ export function createApp() {
           hasExistingEmploymentAgreement: hasExisting,
           jobTitle: input.jobTitle,
         });
-        return c.json({ ...deterministic, ai: rec, history });
+        return c.json({ ...deterministic, ai: rec, history: history ? { templateId: history.templateId, reason: history.reason } : null });
       } catch {
         /* fall through */
       }
     }
-    return c.json({ ...deterministic, history });
+    return c.json({ ...deterministic, history: history ? { templateId: history.templateId, reason: history.reason } : null });
   });
 
   // ── Public signing ────────────────────────────────────────────────
@@ -781,11 +857,19 @@ export function createApp() {
     const store = await getStore();
     const found = await getSigningByToken(store, c.req.param("token"));
     if (!found) return c.json(null);
-    const ip = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-    const ua = c.req.header("user-agent") ?? undefined;
-    await markOpened(store, found.request, ip, ua);
-    const signing = await store.getSettings<{ allowDraftDownload?: boolean }>("signing");
+    const client = requestClient((name) => c.req.header(name));
+    // A signed-in staff member previewing the link must not count as the recipient opening it.
+    const viewer = c.get("session") as SessionUser | null;
+    const preview = Boolean(viewer && viewer.email.toLowerCase() !== found.request.recipientEmail.toLowerCase());
+    if (!preview && found.request.status !== "completed") {
+      await markOpened(store, found.request, client.ip, client.ua);
+    }
+    const [signing, company] = await Promise.all([
+      store.getSettings<{ allowDraftDownload?: boolean }>("signing"),
+      store.getSettings<CompanySettings>("company"),
+    ]);
     const canViewBody = !found.request.requireOtp || Boolean(found.request.otpVerifiedAt);
+    const finalized = found.document.status === "FINALIZED";
     return c.json({
       documentName: found.document.name,
       readableId: found.document.readableId,
@@ -797,10 +881,33 @@ export function createApp() {
       otpVerified: Boolean(found.request.otpVerifiedAt),
       consentAcceptedAt: found.request.consentAcceptedAt,
       recipientSignedAt: found.request.recipientSignedAt,
-      finalized: found.document.status === "FINALIZED",
+      finalized,
       sha256: found.document.sha256,
       signedAt: found.document.signedAt,
       partyName: found.document.partyName,
+      companyName: company.legalName,
+      preview,
+      signedCopyAvailable: finalized && Boolean(found.document.finalPdfPath),
+    });
+  });
+
+  /** Recipient's copy of the finalized agreement (PDF, or print-ready HTML if no PDF engine). */
+  app.get("/sign/:token/pdf", async (c) => {
+    const store = await getStore();
+    const found = await getSigningByToken(store, c.req.param("token"));
+    if (!found) throw new Error("Invalid or expired signing link");
+    const document = found.document;
+    if (document.status !== "FINALIZED" || !document.finalPdfPath) throw new Error("Signed copy is not available yet");
+    const file = await store.getFile(document.finalPdfPath);
+    if (!file) throw new Error("Signed copy is not available yet");
+    if (file.contentType.startsWith("text/html")) {
+      return c.html(printableHtml(new TextDecoder().decode(file.bytes)));
+    }
+    return new Response(Buffer.from(file.bytes), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="${document.readableId}-signed.pdf"`,
+      },
     });
   });
 
@@ -811,29 +918,29 @@ export function createApp() {
     if (found.request.requireOtp && !found.request.otpVerifiedAt) {
       throw new Error("Email verification code is required before signing");
     }
-    await acceptConsent(
-      store,
-      found.request,
-      c.req.header("x-forwarded-for")?.split(",")[0]?.trim(),
-      c.req.header("user-agent") ?? undefined,
-    );
+    const client = requestClient((name) => c.req.header(name));
+    await acceptConsent(store, found.request, client.ip, client.ua);
     return c.json({ ok: true });
   });
 
   app.post("/sign/:token/otp/send", async (c) => {
-    const ip = clientIp(c.req.header("x-forwarded-for"));
-    const limited = rateLimit({ key: `otp-send:${ip}`, limit: 10, windowMs: 15 * 60 * 1000 });
-    if (!limited.ok) throw new Error("Too many attempts. Try again later.");
-    await sendSigningOtp(await getStore(), c.req.param("token"));
-    return c.json({ ok: true });
+    const client = requestClient((name) => c.req.header(name));
+    const token = c.req.param("token");
+    for (const key of [`otp-send:${client.ip}`, `otp-send-token:${token.slice(0, 16)}`]) {
+      const limited = rateLimit({ key, limit: 10, windowMs: 15 * 60 * 1000 });
+      if (!limited.ok) throw new Error("Too many attempts. Try again later.");
+    }
+    const body = (await c.req.json().catch(() => ({}))) as { force?: boolean };
+    const result = await sendSigningOtp(await getStore(), token, { force: Boolean(body.force) });
+    return c.json(result);
   });
 
   app.post("/sign/:token/otp/verify", async (c) => {
-    const ip = clientIp(c.req.header("x-forwarded-for"));
-    const limited = rateLimit({ key: `otp-verify:${ip}`, limit: 30, windowMs: 15 * 60 * 1000 });
+    const client = requestClient((name) => c.req.header(name));
+    const limited = rateLimit({ key: `otp-verify:${client.ip}`, limit: 30, windowMs: 15 * 60 * 1000 });
     if (!limited.ok) throw new Error("Too many attempts. Try again later.");
     const body = z.object({ code: z.string().min(4).max(12) }).parse(await c.req.json());
-    await verifySigningOtp(await getStore(), c.req.param("token"), body.code);
+    await verifySigningOtp(await getStore(), c.req.param("token"), body.code, client);
     return c.json({ ok: true });
   });
 
@@ -846,13 +953,15 @@ export function createApp() {
       throw new Error("Email verification code is required before signing");
     }
     const body = z
-      .object({ imageDataUrl: z.string().min(1), method: z.enum(["draw", "type"]) })
+      .object({ imageDataUrl: z.string().min(1).max(2_200_000), method: z.enum(["draw", "type"]) })
       .parse(await c.req.json());
+    const client = requestClient((name) => c.req.header(name));
     await applyRecipientSignature(store, found.request, {
       method: body.method,
       imageDataUrl: body.imageDataUrl,
-      ip: c.req.header("x-forwarded-for")?.split(",")[0]?.trim(),
-      ua: c.req.header("user-agent") ?? undefined,
+      ip: client.ip,
+      ua: client.ua,
+      appUrl: frontendOrigin(c),
     });
     return c.json({ ok: true as const, documentId: found.document.id });
   });
@@ -902,11 +1011,17 @@ export function createApp() {
   app.get("/knowledge", async (c) => {
     const actor = await authed(c, "knowledge.read");
     const store = await getStore(actor.orgId);
+    const [sources, findings, people, companies] = await Promise.all([
+      store.listDocs<SourceDocument>("sourceDocuments"),
+      store.listDocs<KnowledgeFinding>("knowledgeFindings"),
+      store.listDocs<Person>("people"),
+      store.listDocs<CompanyRecord>("companies"),
+    ]);
     return c.json({
-      sources: await store.listDocs<SourceDocument>("sourceDocuments"),
-      findings: await store.listDocs<KnowledgeFinding>("knowledgeFindings"),
-      people: await store.listDocs<Person>("people"),
-      companies: await store.listDocs<CompanyRecord>("companies"),
+      sources: sources.map((source) => redactSource(source, actor.role)),
+      findings,
+      people: people.map((person) => redactPerson(person, actor.role)),
+      companies,
     });
   });
   app.get("/knowledge/:id/pdf", async (c) => {
@@ -926,10 +1041,11 @@ export function createApp() {
   app.get("/signatures", async (c) => {
     const actor = await authed(c, "signing.manage");
     const store = await getStore(actor.orgId);
-    const [requests, documents] = await Promise.all([
+    const [rawRequests, documents] = await Promise.all([
       store.listDocs<SigningRequest>("signingRequests"),
       store.listDocs<ContractDocument>("documents"),
     ]);
+    const requests = await expireStaleRequests(store, rawRequests);
     return c.json({
       requests: requests.map(publicSigningRequest),
       documents: documents.map(slimDocument),
@@ -1251,7 +1367,8 @@ export function createApp() {
         email: z.string().email(),
         displayName: z.string().min(1),
         role: z.enum(USER_ROLES),
-        password: z.string().min(8),
+        // Optional: invited users normally sign in with Google/Firebase using this email.
+        password: z.string().min(8).optional(),
         active: z.boolean().optional(),
       })
       .parse(await c.req.json());
@@ -1259,7 +1376,7 @@ export function createApp() {
       throw new Error("Only a SUPER_ADMIN can grant SUPER_ADMIN");
     }
     const security = await loadSecuritySettings(store);
-    assertPasswordPolicy(body.password, security);
+    if (body.password) assertPasswordPolicy(body.password, security);
     const users = await store.listDocs<OrgUser>("users");
     if (users.some((u) => u.email.toLowerCase() === body.email.toLowerCase())) {
       throw new Error("A user with that email already exists");
@@ -1270,10 +1387,17 @@ export function createApp() {
       displayName: body.displayName,
       role: body.role,
       active: body.active ?? true,
-      passwordHash: hashPassword(body.password),
+      passwordHash: body.password ? hashPassword(body.password) : undefined,
       createdAt: nowIso(),
     };
     await store.setDoc("users", user);
+    await writeAudit(store, {
+      type: "USER_INVITED",
+      actor,
+      entityType: "user",
+      entityId: user.id,
+      summary: `Invited ${user.email} as ${user.role}.`,
+    });
     return c.json({ user: toPublicUser(user) });
   });
 
@@ -1315,6 +1439,15 @@ export function createApp() {
       passwordHash: body.password ? hashPassword(body.password) : existing.passwordHash,
     };
     await store.setDoc("users", next);
+    if (next.role !== existing.role || next.active !== existing.active) {
+      await writeAudit(store, {
+        type: "USER_ROLE_CHANGED",
+        actor,
+        entityType: "user",
+        entityId: next.id,
+        summary: `${next.email}: ${existing.role}${existing.active ? "" : " (inactive)"} → ${next.role}${next.active ? "" : " (inactive)"}.`,
+      });
+    }
     return c.json({ user: toPublicUser(next) });
   });
 

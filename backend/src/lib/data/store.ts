@@ -47,6 +47,10 @@ export interface DataStore {
   setDoc<T extends { id: string }>(collection: CollectionName, data: T): Promise<void>;
   listDocs<T>(collection: CollectionName): Promise<T[]>;
   queryDocs<T>(collection: CollectionName, predicate: (item: T) => boolean): Promise<T[]>;
+  /** Indexed equality lookup (Firestore `where(field, "==", value)`). Prefer over queryDocs. */
+  whereEquals<T>(collection: CollectionName, field: string, value: string | number | boolean): Promise<T[]>;
+  /** Atomically increment and return a named counter. */
+  nextSequence(key: string): Promise<number>;
   deleteDoc(collection: CollectionName, id: string): Promise<void>;
   getSettings<T>(key: SettingsKey): Promise<T>;
   setSettings<T>(key: SettingsKey, data: T): Promise<void>;
@@ -105,8 +109,7 @@ function sourceAgreementDirs(): string[] {
   return [
     process.env.CONTRACT_SOURCE_DIR,
     join(process.cwd(), "source-agreements"),
-    // Cursor chat attachments from the original Amplify agreement upload set
-    "/Users/arhamawan/.cursor/projects/Users-arhamawan-Documents-Amplify-Contract-thing/attachments/f0153983-e2d6-478e-b263-c04805c2b562",
+    join(dataDir(), "storage", "source-agreements"),
   ].filter((dir): dir is string => Boolean(dir));
 }
 
@@ -176,6 +179,24 @@ class LocalStore implements DataStore {
   async queryDocs<T>(collection: CollectionName, predicate: (item: T) => boolean): Promise<T[]> {
     const all = await this.listDocs<T>(collection);
     return all.filter(predicate);
+  }
+
+  async whereEquals<T>(collection: CollectionName, field: string, value: string | number | boolean): Promise<T[]> {
+    const all = await this.listDocs<Record<string, unknown>>(collection);
+    return all.filter((item) => item[field] === value) as T[];
+  }
+
+  async nextSequence(key: string): Promise<number> {
+    return withLock(async () => {
+      const root = await readRoot();
+      const org = await ensureOrg(root, this.orgId);
+      const sequences = (org.settings.sequences ?? {}) as Record<string, number>;
+      const next = (sequences[key] ?? 0) + 1;
+      sequences[key] = next;
+      org.settings.sequences = sequences;
+      await persist(root);
+      return next;
+    });
   }
 
   async deleteDoc(collection: CollectionName, id: string): Promise<void> {

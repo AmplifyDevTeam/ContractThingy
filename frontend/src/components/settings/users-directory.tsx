@@ -106,7 +106,7 @@ export function UsersDirectory({
           email: form.email,
           role: form.role,
           active: form.active,
-          password: form.password,
+          password: form.password || undefined,
         });
         setUsers((prev) => prev.map((user) => (user.id === updated.id ? updated : user)));
         toast.success("User updated");
@@ -116,7 +116,7 @@ export function UsersDirectory({
           email: form.email,
           role: form.role,
           active: form.active,
-          password: form.password,
+          password: form.password || undefined,
         });
         setUsers((prev) => [...prev, created].sort((a, b) => a.displayName.localeCompare(b.displayName)));
         toast.success("User created");
@@ -135,8 +135,7 @@ export function UsersDirectory({
         <Tile kicker="Directory" span={2}>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-[48ch] text-sm text-muted-foreground">
-              Workspace logins and roles. Passwords are stored hashed; invite people with a temporary password
-              and have them change it after first sign-in.
+              Workspace logins and roles. Invite people by email — they sign in with Google. Passwords are optional and stored hashed.
             </p>
             {canManage ? (
               <Button type="button" size="sm" className="gap-1.5" onClick={openCreate}>
@@ -236,7 +235,7 @@ export function UsersDirectory({
             <DialogDescription>
               {editing
                 ? "Update name, role, or set a new password. Leave password blank to keep the current one."
-                : "Create a workspace login. They can sign in immediately with the password you set."}
+                : "Invite someone by email. They sign in with Google (or Firebase email) using this address. A password is only needed if password login is enabled."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-1">
@@ -280,7 +279,7 @@ export function UsersDirectory({
             </div>
             <div className="grid gap-2">
               <Label htmlFor="user-password">
-                {editing ? "New password (optional)" : "Temporary password"}
+                {editing ? "New password (optional)" : "Temporary password (optional)"}
               </Label>
               <Input
                 id="user-password"
@@ -288,7 +287,7 @@ export function UsersDirectory({
                 autoComplete="new-password"
                 value={form.password}
                 onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
-                placeholder={editing ? "Leave blank to keep current" : "At least 8 characters"}
+                placeholder={editing ? "Leave blank to keep current" : "Leave blank for Google sign-in only"}
               />
             </div>
             <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5">
@@ -313,7 +312,7 @@ export function UsersDirectory({
                 saving ||
                 !form.displayName.trim() ||
                 !form.email.trim() ||
-                (!editing && form.password.length < 8)
+                (form.password.length > 0 && form.password.length < 8)
               }
               onClick={() => void save()}
             >

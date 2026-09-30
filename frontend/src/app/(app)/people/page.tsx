@@ -3,8 +3,8 @@ import { PageHeader, IndexRow } from "@/components/page-header";
 import { Bento, Stat, Tile } from "@/components/bento";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { requirePermission } from "@/lib/auth/session";
-import { redactPerson } from "@/lib/auth/permissions";
+import { can, requirePermission } from "@/lib/auth/session";
+import { canSeeSensitive, redactPerson } from "@/lib/auth/permissions";
 import { apiGet } from "@/lib/api";
 import type { Person } from "@/lib/types";
 
@@ -12,6 +12,7 @@ export default async function PeoplePage() {
   const session = await requirePermission("people.read");
   const { people: raw } = await apiGet<{ people: Person[] }>("/people");
   const people = raw.map((person) => redactPerson(person, session.role));
+  const showPay = canSeeSensitive(session.role);
   const onStaff = people.filter((item) => ["active", "probation", "on_leave"].includes(item.employmentStatus)).length;
   const left = people.filter((item) => ["resigned", "terminated"].includes(item.employmentStatus)).length;
 
@@ -22,9 +23,11 @@ export default async function PeoplePage() {
         title="People"
         description="Employees, contractors, and other individuals."
         actions={
-          <Button asChild>
-            <Link href="/people/new">New person</Link>
-          </Button>
+          can(session, "people.write") ? (
+            <Button asChild>
+              <Link href="/people/new">New person</Link>
+            </Button>
+          ) : null
         }
       />
       <Bento>
@@ -36,7 +39,7 @@ export default async function PeoplePage() {
                 href={`/people/${person.id}`}
                 n={String(index + 1).padStart(2, "0")}
                 title={person.fullLegalName}
-                meta={`${person.type} · ${person.currentJobTitle || "No title"} · ${person.salaryCurrency} ${person.currentSalary.toLocaleString()}`}
+                meta={`${person.type} · ${person.currentJobTitle || "No title"}${showPay ? ` · ${person.salaryCurrency} ${person.currentSalary.toLocaleString()}` : ""}`}
                 trailing={<StatusBadge status={person.employmentStatus} />}
               />
             ))}

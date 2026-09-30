@@ -1504,8 +1504,9 @@ export function SettingsPanels({
               ]}
             />
             <p className="mt-5 text-sm leading-relaxed text-muted-foreground">
-              Permissions are enforced in server actions. Signing links use hashed random tokens. Final PDFs are stored
-              outside Firestore. Audit events are append-only.
+              Permissions are enforced by the API on every request. Signing links use hashed random tokens (plus an
+              encrypted copy so staff can re-share the same link). Signed agreements are stored in Firestore with a
+              SHA-256 fingerprint. Audit events are append-only.
             </p>
             {!security.sessionSecretConfigured && security.production ? (
               <p className="mt-3 text-sm text-destructive">

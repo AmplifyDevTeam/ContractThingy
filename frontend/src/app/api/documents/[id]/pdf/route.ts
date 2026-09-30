@@ -1,41 +1,34 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { SESSION_COOKIE } from "@/lib/api";
-
-function apiBase() {
-  const configured = (process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
-  if (!configured || configured.includes("contract-thingy-backend.vercel.app")) {
-    if (process.env.VERCEL || process.env.NODE_ENV === "production") {
-      return "https://amplify-contractos-api.vercel.app";
-    }
-  }
-  return (configured || "http://localhost:4000").replace(
-    /\/$/,
-    "",
-  );
-}
+import { apiBase } from "@/lib/api-base";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
-  const res = await fetch(`${apiBase()}/documents/${id}/pdf`, {
-    headers: token
-      ? { Authorization: `Bearer ${token}`, Cookie: `${SESSION_COOKIE}=${token}` }
-      : undefined,
+  const res = await fetch(`${apiBase()}/documents/${encodeURIComponent(id)}/pdf`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     cache: "no-store",
   });
-  if (!res.ok) {
-    return NextResponse.json({ error: "PDF unavailable" }, { status: res.status });
+  const contentType = res.headers.get("Content-Type") ?? "";
+  if (!res.ok || !contentType.includes("application/pdf")) {
+    // PDF rendering unavailable on this deployment: fall back to the browser print view.
+    if (res.status === 503 || (res.ok && !contentType.includes("application/pdf"))) {
+      return NextResponse.redirect(new URL(`/api/documents/${encodeURIComponent(id)}/print`, request.url));
+    }
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    return NextResponse.json({ error: data?.error ?? "PDF unavailable" }, { status: res.status });
   }
   const bytes = await res.arrayBuffer();
   return new NextResponse(bytes, {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": res.headers.get("Content-Disposition") ?? `attachment; filename="${id}.pdf"`,
+      "Cache-Control": "private, no-store",
     },
   });
 }

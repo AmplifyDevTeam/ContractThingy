@@ -17,6 +17,8 @@ import type { OrgUser, UserRole } from "@/lib/types";
 
 export const SESSION_COOKIE = "contractos_session";
 
+const DEV_FALLBACK_PASSWORD = "change-me-now";
+
 export type SessionUser = {
   userId: string;
   orgId: string;
@@ -109,6 +111,13 @@ export async function loginWithPassword(email: string, password: string): Promis
   const user = users.find((item) => item.email.toLowerCase() === email.toLowerCase() && item.active);
   if (!user?.passwordHash || !verifyPassword(password, user.passwordHash)) {
     throw new Error("Invalid email or password");
+  }
+  // The local development fallback (admin@localhost / change-me-now) must never work in production.
+  if (
+    process.env.NODE_ENV === "production" &&
+    (password === DEV_FALLBACK_PASSWORD || user.email.endsWith("@localhost"))
+  ) {
+    throw new Error("The default development password cannot be used in production. Reset this account's password.");
   }
   const next: OrgUser = { ...user, lastLoginAt: nowIso() };
   await store.setDoc("users", next);

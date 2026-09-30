@@ -1,8 +1,8 @@
 import { cache } from "react";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { apiGet, SESSION_COOKIE, type SessionUser } from "@/lib/api";
-import { AuthzError, assertPermission, type Permission } from "@/lib/auth/permissions";
+import { hasPermission, type Permission } from "@/lib/auth/permissions";
 
 export type { SessionUser };
 export { SESSION_COOKIE };
@@ -55,14 +55,23 @@ export async function requireSession(): Promise<SessionUser> {
 }
 
 export async function requirePermission(permission: Permission): Promise<SessionUser> {
-  // Trust the JWT for nav auth. Layout already refreshes VIEWER cookies via /auth/me.
+  // Fast path: trust the JWT cookie for navigation.
   const session = await getSessionFromCookie();
   if (!session) redirect("/login");
-  try {
-    assertPermission(session.role, permission);
-  } catch (error) {
-    if (error instanceof AuthzError) redirect("/dashboard");
-    throw error;
+  if (hasPermission(session.role, permission)) return session;
+
+  // Slow path: the cookie role may be stale (e.g. the user was promoted after signing in).
+  const fresh = await getSession();
+  if (!fresh) redirect("/login");
+  if (hasPermission(fresh.role, permission)) {
+    // Re-mint the cookie so later navigations use the fresh role, then come back here.
+    const here = (await headers()).get("x-pathname") || "/dashboard";
+    redirect(`/api/session/refresh?next=${encodeURIComponent(here)}`);
   }
-  return session;
+  redirect(`/no-access?need=${encodeURIComponent(permission)}`);
+}
+
+/** Non-redirecting check for conditionally rendering actions. */
+export function can(session: SessionUser, permission: Permission): boolean {
+  return hasPermission(session.role, permission);
 }

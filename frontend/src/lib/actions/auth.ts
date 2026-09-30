@@ -5,14 +5,15 @@ import { redirect } from "next/navigation";
 import { apiPost, ApiError, SESSION_COOKIE } from "@/lib/api";
 import type { SessionUser } from "@/lib/auth/session";
 
-async function setSessionCookie(token: string) {
+async function setSessionCookie(token: string, maxAge?: number) {
   const jar = await cookies();
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 14 * 24 * 60 * 60,
+    // Follows Settings → Security → session length (sent by the API).
+    maxAge: maxAge ?? 14 * 24 * 60 * 60,
   });
 }
 
@@ -20,11 +21,11 @@ export async function loginAction(formData: FormData) {
   const email = String(formData.get("email") ?? "");
   const password = String(formData.get("password") ?? "");
   try {
-    const data = await apiPost<{ token: string; user: SessionUser }>("/auth/login", {
+    const data = await apiPost<{ token: string; user: SessionUser; maxAge?: number }>("/auth/login", {
       email,
       password,
     });
-    await setSessionCookie(data.token);
+    await setSessionCookie(data.token, data.maxAge);
   } catch (error) {
     if (error instanceof ApiError) redirect(`/login?error=${encodeURIComponent(error.message)}`);
     throw error;
@@ -38,11 +39,11 @@ export async function loginWithPasswordAction(
   password: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
-    const data = await apiPost<{ token: string; user: SessionUser }>("/auth/login", {
+    const data = await apiPost<{ token: string; user: SessionUser; maxAge?: number }>("/auth/login", {
       email,
       password,
     });
-    await setSessionCookie(data.token);
+    await setSessionCookie(data.token, data.maxAge);
     return { ok: true };
   } catch (error) {
     if (error instanceof ApiError) {
@@ -57,10 +58,10 @@ export async function loginWithFirebaseAction(
   idToken: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
-    const data = await apiPost<{ token: string; user: SessionUser }>("/auth/firebase", {
+    const data = await apiPost<{ token: string; user: SessionUser; maxAge?: number }>("/auth/firebase", {
       idToken,
     });
-    await setSessionCookie(data.token);
+    await setSessionCookie(data.token, data.maxAge);
     return { ok: true };
   } catch (error) {
     if (error instanceof ApiError) {

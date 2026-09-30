@@ -47,6 +47,8 @@ export default async function DocumentDetailPage({
     .filter((item) => item.status !== "revoked")
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   const canEditTheme = hasPermission(session.role, "documents.edit");
+  const canPdf = hasPermission(session.role, "documents.pdf");
+  const designLocked = !["DRAFT", "CONFIGURING", "REVIEW_REQUIRED", "APPROVED", "READY_TO_SEND"].includes(document.status);
 
   return (
     <div>
@@ -63,9 +65,20 @@ export default async function DocumentDetailPage({
         description={`${document.partyName} · template ${document.templateId} locked to version ${document.templateVersionId}`}
         actions={
           <div className="flex items-center gap-3">
-            <Button asChild variant="outline">
-              <a href={`/api/documents/${document.id}/pdf`}>Download PDF</a>
-            </Button>
+            {canPdf ? (
+              <>
+                <Button asChild variant="outline">
+                  <a href={`/api/documents/${document.id}/pdf`}>
+                    {document.status === "FINALIZED" ? "Download signed PDF" : "Download PDF"}
+                  </a>
+                </Button>
+                <Button asChild variant="ghost">
+                  <a href={`/api/documents/${document.id}/print`} target="_blank" rel="noopener noreferrer">
+                    Print view
+                  </a>
+                </Button>
+              </>
+            ) : null}
             <StatusBadge status={document.status} />
           </div>
         }
@@ -74,6 +87,7 @@ export default async function DocumentDetailPage({
         <div className="min-w-0 space-y-4">
           <iframe
             title="Document"
+            sandbox=""
             className="min-h-[80vh] w-full rounded-md border border-border bg-muted"
             srcDoc={html}
           />
@@ -152,7 +166,7 @@ export default async function DocumentDetailPage({
               <DocumentThemePicker
                 documentId={document.id}
                 themeId={document.themeId}
-                locked={document.status === "VOIDED"}
+                locked={designLocked}
                 aiEnabled={aiThemeEnabled}
               />
             ) : (
@@ -185,11 +199,25 @@ export default async function DocumentDetailPage({
             <SigningLinkPanel
               documentId={document.id}
               status={document.status}
-              recipientEmail={signing.find((item) => item.status !== "revoked")?.recipientEmail}
+              recipientEmail={activeSigning?.recipientEmail}
+              requestId={activeSigning?.id}
+              canSend={hasPermission(session.role, "documents.send")}
             />
           </Inspector>
           <div className="border-t border-border px-5 py-5">
-            <DocumentActions document={document} />
+            <DocumentActions
+              document={document}
+              canApprove={hasPermission(session.role, "documents.approve")}
+              canVoid={hasPermission(session.role, "documents.void")}
+              canCountersign={
+                hasPermission(session.role, "documents.countersign") &&
+                (document.status === "PARTIALLY_SIGNED" ||
+                  (["SENT", "VIEWED"].includes(document.status) &&
+                    Boolean(activeSigning) &&
+                    activeSigning?.order !== "recipient_first" &&
+                    !activeSigning?.companySignedAt))
+              }
+            />
           </div>
         </aside>
       </div>

@@ -1,4 +1,5 @@
-import { cookies } from "next/headers";
+import { cookies, headers as requestHeaders } from "next/headers";
+import { apiBase } from "@/lib/api-base";
 import { redirect } from "next/navigation";
 
 export const SESSION_COOKIE = "contractos_session";
@@ -11,16 +12,26 @@ export type SessionUser = {
   role: import("@/lib/types").UserRole;
 };
 
-function apiBase() {
-  const configured = (process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
-  // Misconfigured production backend still has FIREBASE_PROJECT_ID=contractos.
-  // Route that host to the corrected API until the old Vercel project env is fixed.
-  if (!configured || configured.includes("contract-thingy-backend.vercel.app")) {
-    if (process.env.VERCEL || process.env.NODE_ENV === "production") {
-      return "https://amplify-contractos-api.vercel.app";
-    }
+/**
+ * Server actions call the API from the Vercel server, so the API would otherwise log the
+ * frontend's IP for signers. Forward the real client IP/UA, authenticated by a shared secret.
+ */
+async function forwardClientIdentity(headers: Headers) {
+  const secret = process.env.PROXY_SHARED_SECRET?.trim();
+  if (!secret) return;
+  try {
+    const incoming = await requestHeaders();
+    const ip =
+      incoming.get("x-real-ip") ||
+      incoming.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      "";
+    if (ip) headers.set("x-client-ip", ip);
+    const ua = incoming.get("user-agent");
+    if (ua) headers.set("x-client-ua", ua);
+    headers.set("x-proxy-secret", secret);
+  } catch {
+    // headers() is unavailable outside a request scope.
   }
-  return configured || "http://localhost:4000";
 }
 
 export class ApiError extends Error {
@@ -45,6 +56,7 @@ export async function apiFetch<T>(
   }
   const frontendHost = process.env.APP_URL?.replace(/^https?:\/\//, "") || "localhost:3000";
   headers.set("x-frontend-host", frontendHost);
+  await forwardClientIdentity(headers);
 
   const res = await fetch(`${apiBase()}${path}`, {
     ...init,

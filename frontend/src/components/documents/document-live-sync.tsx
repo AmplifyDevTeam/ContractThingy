@@ -8,6 +8,8 @@ import { getDocumentSyncStateAction } from "@/lib/actions/workspace";
 const CHANNEL = "contractos-signing";
 
 const WATCH = new Set(["SENT", "VIEWED", "PARTIALLY_SIGNED"]);
+/** Poll gently: each tick is an API + Firestore round-trip. Same-browser events arrive instantly via BroadcastChannel. */
+const POLL_MS = 15_000;
 
 export function DocumentLiveSync({
   documentId,
@@ -22,7 +24,9 @@ export function DocumentLiveSync({
 }) {
   const router = useRouter();
   const baseline = useRef({ status, signingStatus, lastActivityAt });
-  baseline.current = { status, signingStatus, lastActivityAt };
+  useEffect(() => {
+    baseline.current = { status, signingStatus, lastActivityAt };
+  }, [status, signingStatus, lastActivityAt]);
 
   useEffect(() => {
     if (typeof BroadcastChannel === "undefined") return;
@@ -46,6 +50,7 @@ export function DocumentLiveSync({
     let cancelled = false;
 
     async function tick() {
+      if (document.visibilityState === "hidden") return;
       try {
         const next = await getDocumentSyncStateAction(documentId);
         if (cancelled || !next) return;
@@ -67,11 +72,10 @@ export function DocumentLiveSync({
       }
     }
 
-    const interval = window.setInterval(() => void tick(), 2500);
+    const interval = window.setInterval(() => void tick(), POLL_MS);
     const onFocus = () => void tick();
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
-    void tick();
 
     return () => {
       cancelled = true;
