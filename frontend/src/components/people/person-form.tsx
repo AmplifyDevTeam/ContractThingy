@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { createPersonAction, updatePersonAction } from "@/lib/actions/workspace";
+import { createPersonAction, updatePersonAction } from "@/lib/actions/client";
 import { EMPLOYMENT_STATUSES, PERSON_TYPES } from "@/lib/types/enums";
 import type { Person } from "@/lib/types";
 

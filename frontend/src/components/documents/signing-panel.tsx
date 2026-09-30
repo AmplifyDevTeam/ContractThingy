@@ -10,7 +10,7 @@ import {
   getSigningLinkAction,
   revokeSigningLinkAction,
   sendSignatureAction,
-} from "@/lib/actions/workspace";
+} from "@/lib/actions/client";
 
 const SENDABLE = ["APPROVED", "READY_TO_SEND"];
 const OUTSTANDING = ["SENT", "VIEWED", "EXPIRED"];

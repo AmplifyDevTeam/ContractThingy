@@ -15,7 +15,7 @@ import { assembleDocument } from "@/lib/render/assemble";
 import { brandingAssetSrc, resolveBrandingAssets } from "@/lib/branding/identity";
 import { publicApiBase } from "@/lib/branding/public-api";
 import { recommendDocumentType } from "@/lib/rules/engine";
-import { generateAction, recommendAction, createPersonAction, createCompanyAction } from "@/lib/actions/workspace";
+import { generateAction, recommendAction, createPersonAction, createCompanyAction } from "@/lib/actions/client";
 import { recommendFromClientHistory, recommendFromPersonHistory } from "@/lib/knowledge/library";
 import { AiCaption, AiHint } from "@/components/ai-hint";
 import { cn } from "@/lib/utils";

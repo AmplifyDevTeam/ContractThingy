@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { getDocumentSyncStateAction } from "@/lib/actions/workspace";
+import { getDocumentSyncStateAction } from "@/lib/actions/client";
 
 const CHANNEL = "contractos-signing";
 

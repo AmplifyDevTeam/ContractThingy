@@ -17,7 +17,7 @@ import {
   recipientSignAction,
   sendSigningOtpAction,
   verifySigningOtpAction,
-} from "@/lib/actions/signing";
+} from "@/lib/actions/client";
 import { broadcastSigningEvent } from "@/components/documents/document-live-sync";
 import { publicApiBase, workspaceLogoUrl } from "@/lib/branding/public-api";
 

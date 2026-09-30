@@ -1,5 +1,7 @@
 "use server";
 
+import { toResult } from "@/lib/actions/result";
+
 import { apiGet, apiPatch, apiPost, apiPut, ApiError } from "@/lib/api";
 import type { DashboardInsightSnapshot, DashboardInsightsResult } from "@/lib/dashboard/insights";
 import type { ThemeId } from "@/lib/types/enums";
@@ -30,58 +32,58 @@ export type SigningLinkResult = {
   emailProvider: "resend" | "console";
 };
 
-export async function createPersonAction(input: unknown) {
+async function createPersonAction__impl(input: unknown) {
   const data = await apiPost<{ person: Person }>("/people", input);
   return data.person;
 }
 
-export async function updatePersonAction(input: { id: string } & Record<string, unknown>) {
+async function updatePersonAction__impl(input: { id: string } & Record<string, unknown>) {
   const { id, ...patch } = input;
   const data = await apiPatch<{ person: Person }>(`/people/${id}`, patch);
   return data.person;
 }
 
-export async function createCompanyAction(input: unknown) {
+async function createCompanyAction__impl(input: unknown) {
   const data = await apiPost<{ company: CompanyRecord }>("/companies", input);
   return data.company;
 }
 
-export async function previewAction(input: unknown) {
+async function previewAction__impl(input: unknown) {
   return apiPost("/generate/preview", input);
 }
 
-export async function generateAction(input: unknown) {
+async function generateAction__impl(input: unknown) {
   const data = await apiPost<{ document: ContractDocument }>("/generate", input);
   return data.document;
 }
 
-export async function approveAction(documentId: string) {
+async function approveAction__impl(documentId: string) {
   await apiPost(`/documents/${documentId}/approve`);
 }
 
-export async function voidAction(documentId: string, reason: string) {
+async function voidAction__impl(documentId: string, reason: string) {
   await apiPost(`/documents/${documentId}/void`, { reason });
 }
 
-export async function sendSignatureAction(documentId: string, recipient?: { name: string; email: string }) {
+async function sendSignatureAction__impl(documentId: string, recipient?: { name: string; email: string }) {
   return apiPost<SigningLinkResult>(`/documents/${documentId}/send`, recipient ?? {});
 }
 
-export async function getSigningLinkAction(documentId: string) {
+async function getSigningLinkAction__impl(documentId: string) {
   const data = await apiGet<{ link: SigningLinkResult | null }>(`/documents/${documentId}/signing-link`);
   if (!data.link) throw new Error("No active signing link");
   return data.link;
 }
 
-export async function revokeSigningLinkAction(requestId: string) {
+async function revokeSigningLinkAction__impl(requestId: string) {
   await apiPost(`/signing/${requestId}/revoke`);
 }
 
-export async function extendSigningLinkAction(requestId: string, days: number) {
+async function extendSigningLinkAction__impl(requestId: string, days: number) {
   await apiPost(`/signing/${requestId}/extend`, { days });
 }
 
-export async function countersignAction(
+async function countersignAction__impl(
   documentId: string,
   imageDataUrl: string,
   method: "draw" | "type",
@@ -89,7 +91,7 @@ export async function countersignAction(
   await apiPost(`/documents/${documentId}/countersign`, { imageDataUrl, method });
 }
 
-export async function recommendAction(input: {
+async function recommendAction__impl(input: {
   partyType: string;
   action: string;
   personId?: string;
@@ -106,38 +108,38 @@ export async function recommendAction(input: {
   });
 }
 
-export async function saveCompanySettingsAction(input: unknown) {
+async function saveCompanySettingsAction__impl(input: unknown) {
   return apiPut<CompanySettings>("/settings/company", input);
 }
 
-export async function saveWorkspaceSettingsAction(input: unknown) {
+async function saveWorkspaceSettingsAction__impl(input: unknown) {
   return apiPut<WorkspaceSettings>("/settings/workspace", input);
 }
 
-export async function uploadBrandingAssetAction(input: {
+async function uploadBrandingAssetAction__impl(input: {
   kind: "logoDark" | "logoLight" | "seal" | "signature";
   dataUrl: string;
 }) {
   return apiPost<{ company: CompanySettings }>("/settings/branding/upload", input);
 }
 
-export async function saveAiSettingsAction(input: unknown) {
+async function saveAiSettingsAction__impl(input: unknown) {
   return apiPut<AiSettings>("/settings/ai", input);
 }
 
-export async function saveSigningSettingsAction(input: unknown) {
+async function saveSigningSettingsAction__impl(input: unknown) {
   return apiPut<SigningSettings>("/settings/signing", input);
 }
 
-export async function saveEmailSettingsAction(input: unknown) {
+async function saveEmailSettingsAction__impl(input: unknown) {
   return apiPut<EmailSettings>("/settings/email", input);
 }
 
-export async function saveSecuritySettingsAction(input: unknown) {
+async function saveSecuritySettingsAction__impl(input: unknown) {
   return apiPut<SecuritySettings>("/settings/security", input);
 }
 
-export async function sendTestEmailAction(to: string) {
+async function sendTestEmailAction__impl(to: string) {
   return apiPost<{ ok: true; delivered: boolean; provider: "resend" | "console" }>(
     "/settings/email/test",
     { to },
@@ -161,7 +163,7 @@ export async function loadGenerateCatalog() {
   }>("/generate/catalog");
 }
 
-export async function getDocumentSyncStateAction(documentId: string) {
+async function getDocumentSyncStateAction__impl(documentId: string) {
   return apiGet<{
     status: string;
     signingStatus: string | null;
@@ -170,14 +172,14 @@ export async function getDocumentSyncStateAction(documentId: string) {
   }>(`/documents/${documentId}/sync`);
 }
 
-export async function updateDocumentThemeAction(documentId: string, themeId: string) {
+async function updateDocumentThemeAction__impl(documentId: string, themeId: string) {
   const data = await apiPatch<{ document: ContractDocument }>(`/documents/${documentId}/theme`, {
     themeId,
   });
   return data.document;
 }
 
-export async function recommendDocumentThemeAction(documentId: string) {
+async function recommendDocumentThemeAction__impl(documentId: string) {
   return apiPost<{
     themeId: ThemeId;
     reason: string;
@@ -186,11 +188,88 @@ export async function recommendDocumentThemeAction(documentId: string) {
   }>(`/documents/${documentId}/theme/recommend`);
 }
 
-export async function getDashboardInsightsAction(snapshot: DashboardInsightSnapshot) {
+async function getDashboardInsightsAction__impl(snapshot: DashboardInsightSnapshot) {
   try {
     return await apiPost<DashboardInsightsResult>("/dashboard/insights", snapshot);
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw error;
   }
+}
+
+// ── Public actions (return ActionResult; see lib/actions/result.ts) ──
+export async function createPersonAction(...args: Parameters<typeof createPersonAction__impl>) {
+  return toResult(() => createPersonAction__impl(...args));
+}
+export async function updatePersonAction(...args: Parameters<typeof updatePersonAction__impl>) {
+  return toResult(() => updatePersonAction__impl(...args));
+}
+export async function createCompanyAction(...args: Parameters<typeof createCompanyAction__impl>) {
+  return toResult(() => createCompanyAction__impl(...args));
+}
+export async function previewAction(...args: Parameters<typeof previewAction__impl>) {
+  return toResult(() => previewAction__impl(...args));
+}
+export async function generateAction(...args: Parameters<typeof generateAction__impl>) {
+  return toResult(() => generateAction__impl(...args));
+}
+export async function approveAction(...args: Parameters<typeof approveAction__impl>) {
+  return toResult(() => approveAction__impl(...args));
+}
+export async function voidAction(...args: Parameters<typeof voidAction__impl>) {
+  return toResult(() => voidAction__impl(...args));
+}
+export async function sendSignatureAction(...args: Parameters<typeof sendSignatureAction__impl>) {
+  return toResult(() => sendSignatureAction__impl(...args));
+}
+export async function getSigningLinkAction(...args: Parameters<typeof getSigningLinkAction__impl>) {
+  return toResult(() => getSigningLinkAction__impl(...args));
+}
+export async function revokeSigningLinkAction(...args: Parameters<typeof revokeSigningLinkAction__impl>) {
+  return toResult(() => revokeSigningLinkAction__impl(...args));
+}
+export async function extendSigningLinkAction(...args: Parameters<typeof extendSigningLinkAction__impl>) {
+  return toResult(() => extendSigningLinkAction__impl(...args));
+}
+export async function countersignAction(...args: Parameters<typeof countersignAction__impl>) {
+  return toResult(() => countersignAction__impl(...args));
+}
+export async function recommendAction(...args: Parameters<typeof recommendAction__impl>) {
+  return toResult(() => recommendAction__impl(...args));
+}
+export async function saveCompanySettingsAction(...args: Parameters<typeof saveCompanySettingsAction__impl>) {
+  return toResult(() => saveCompanySettingsAction__impl(...args));
+}
+export async function saveWorkspaceSettingsAction(...args: Parameters<typeof saveWorkspaceSettingsAction__impl>) {
+  return toResult(() => saveWorkspaceSettingsAction__impl(...args));
+}
+export async function uploadBrandingAssetAction(...args: Parameters<typeof uploadBrandingAssetAction__impl>) {
+  return toResult(() => uploadBrandingAssetAction__impl(...args));
+}
+export async function saveAiSettingsAction(...args: Parameters<typeof saveAiSettingsAction__impl>) {
+  return toResult(() => saveAiSettingsAction__impl(...args));
+}
+export async function saveSigningSettingsAction(...args: Parameters<typeof saveSigningSettingsAction__impl>) {
+  return toResult(() => saveSigningSettingsAction__impl(...args));
+}
+export async function saveEmailSettingsAction(...args: Parameters<typeof saveEmailSettingsAction__impl>) {
+  return toResult(() => saveEmailSettingsAction__impl(...args));
+}
+export async function saveSecuritySettingsAction(...args: Parameters<typeof saveSecuritySettingsAction__impl>) {
+  return toResult(() => saveSecuritySettingsAction__impl(...args));
+}
+export async function sendTestEmailAction(...args: Parameters<typeof sendTestEmailAction__impl>) {
+  return toResult(() => sendTestEmailAction__impl(...args));
+}
+export async function getDocumentSyncStateAction(...args: Parameters<typeof getDocumentSyncStateAction__impl>) {
+  return toResult(() => getDocumentSyncStateAction__impl(...args));
+}
+export async function updateDocumentThemeAction(...args: Parameters<typeof updateDocumentThemeAction__impl>) {
+  return toResult(() => updateDocumentThemeAction__impl(...args));
+}
+export async function recommendDocumentThemeAction(...args: Parameters<typeof recommendDocumentThemeAction__impl>) {
+  return toResult(() => recommendDocumentThemeAction__impl(...args));
+}
+export async function getDashboardInsightsAction(...args: Parameters<typeof getDashboardInsightsAction__impl>) {
+  return toResult(() => getDashboardInsightsAction__impl(...args));
 }
