@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { SignaturePad } from "@/components/signing/signature-pad";
-import { approveAction, voidAction, countersignAction } from "@/lib/actions/workspace";
+import { approveAction, voidAction, countersignAction } from "@/lib/actions/client";
 import { broadcastSigningEvent } from "@/components/documents/document-live-sync";
 import type { ContractDocument } from "@/lib/types";
 

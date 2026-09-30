@@ -1,5 +1,7 @@
 "use server";
 
+import { toResult } from "@/lib/actions/result";
+
 import { apiGet, apiPost } from "@/lib/api";
 
 export type SigningPayload = {
@@ -23,26 +25,43 @@ export type SigningPayload = {
   signedCopyAvailable?: boolean;
 } | null;
 
-export async function openSigningAction(token: string): Promise<SigningPayload> {
+async function openSigningAction__impl(token: string): Promise<SigningPayload> {
   return apiGet<SigningPayload>(`/sign/${token}`);
 }
 
-export async function consentSigningAction(token: string) {
+async function consentSigningAction__impl(token: string) {
   return apiPost<{ ok: true }>(`/sign/${token}/consent`);
 }
 
-export async function sendSigningOtpAction(token: string, force = false) {
+async function sendSigningOtpAction__impl(token: string, force = false) {
   return apiPost<{ ok: true; sent?: boolean }>(`/sign/${token}/otp/send`, { force });
 }
 
-export async function verifySigningOtpAction(token: string, code: string) {
+async function verifySigningOtpAction__impl(token: string, code: string) {
   return apiPost<{ ok: true }>(`/sign/${token}/otp/verify`, { code });
 }
 
-export async function recipientSignAction(
+async function recipientSignAction__impl(
   token: string,
   imageDataUrl: string,
   method: "draw" | "type",
 ) {
   return apiPost<{ ok: true; documentId: string }>(`/sign/${token}/sign`, { imageDataUrl, method });
+}
+
+// ── Public actions (return ActionResult; see lib/actions/result.ts) ──
+export async function openSigningAction(...args: Parameters<typeof openSigningAction__impl>) {
+  return toResult(() => openSigningAction__impl(...args));
+}
+export async function consentSigningAction(...args: Parameters<typeof consentSigningAction__impl>) {
+  return toResult(() => consentSigningAction__impl(...args));
+}
+export async function sendSigningOtpAction(...args: Parameters<typeof sendSigningOtpAction__impl>) {
+  return toResult(() => sendSigningOtpAction__impl(...args));
+}
+export async function verifySigningOtpAction(...args: Parameters<typeof verifySigningOtpAction__impl>) {
+  return toResult(() => verifySigningOtpAction__impl(...args));
+}
+export async function recipientSignAction(...args: Parameters<typeof recipientSignAction__impl>) {
+  return toResult(() => recipientSignAction__impl(...args));
 }

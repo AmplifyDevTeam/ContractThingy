@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AiCaption, AiHint } from "@/components/ai-hint";
 import { themeById } from "@/lib/branding/themes";
-import { recommendDocumentThemeAction, updateDocumentThemeAction } from "@/lib/actions/workspace";
+import { recommendDocumentThemeAction, updateDocumentThemeAction } from "@/lib/actions/client";
 import type { ThemeId } from "@/lib/types/enums";
 
 type Suggestion = {

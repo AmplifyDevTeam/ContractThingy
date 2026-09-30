@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { DashTile } from "@/components/dashboard/motion";
 import { AiCaption, AiHint } from "@/components/ai-hint";
-import { getDashboardInsightsAction } from "@/lib/actions/workspace";
+import { getDashboardInsightsAction } from "@/lib/actions/client";
 import type {
   DashboardInsightSnapshot,
   DashboardInsightsResult,

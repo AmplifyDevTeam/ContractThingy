@@ -19,7 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   createOrgUserAction,
   updateOrgUserAction,
-} from "@/lib/actions/users";
+} from "@/lib/actions/client";
 import type { PublicOrgUser } from "@/lib/users-public";
 import { permissionsFor } from "@/lib/auth/permissions";
 import { USER_ROLES, type UserRole } from "@/lib/types/enums";
@@ -100,14 +100,15 @@ export function UsersDirectory({
     setSaving(true);
     try {
       if (editing && form.id) {
-        const updated = await updateOrgUserAction({
-          id: form.id,
-          displayName: form.displayName,
-          email: form.email,
-          role: form.role,
-          active: form.active,
-          password: form.password || undefined,
-        });
+        // Send only what changed (e.g. legacy accounts like admin@localhost fail email validation).
+        const original = users.find((user) => user.id === form.id);
+        const patch: Record<string, unknown> = { id: form.id };
+        if (form.displayName !== original?.displayName) patch.displayName = form.displayName;
+        if (form.email.trim().toLowerCase() !== original?.email.toLowerCase()) patch.email = form.email.trim();
+        if (form.role !== original?.role) patch.role = form.role;
+        if (form.active !== original?.active) patch.active = form.active;
+        if (form.password) patch.password = form.password;
+        const updated = await updateOrgUserAction(patch as { id: string });
         setUsers((prev) => prev.map((user) => (user.id === updated.id ? updated : user)));
         toast.success("User updated");
       } else {

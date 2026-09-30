@@ -15,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BRANDING_TYPE_META } from "@/lib/branding/themes";
 import { runThemeTransition } from "@/components/motion/theme-transition";
-import { saveAiSettingsAction, saveCompanySettingsAction, saveEmailSettingsAction, saveSecuritySettingsAction, saveSigningSettingsAction, saveWorkspaceSettingsAction, sendTestEmailAction, uploadBrandingAssetAction } from "@/lib/actions/workspace";
+import { saveAiSettingsAction, saveCompanySettingsAction, saveEmailSettingsAction, saveSecuritySettingsAction, saveSigningSettingsAction, saveWorkspaceSettingsAction, sendTestEmailAction, uploadBrandingAssetAction } from "@/lib/actions/client";
 import { isStoredBrandingPath, resolveBrandingAssets } from "@/lib/branding/identity";
 import { workspaceAssetUrl, workspaceLogoUrl } from "@/lib/branding/public-api";
 import { clearShellBrandingCache } from "@/lib/branding/shell-branding";
