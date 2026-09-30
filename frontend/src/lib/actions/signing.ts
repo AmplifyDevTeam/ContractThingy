@@ -17,6 +17,10 @@ export type SigningPayload = {
   sha256?: string | null;
   signedAt?: string | null;
   partyName: string;
+  companyName?: string;
+  /** Opened by a signed-in staff member: nothing is recorded as a recipient view. */
+  preview?: boolean;
+  signedCopyAvailable?: boolean;
 } | null;
 
 export async function openSigningAction(token: string): Promise<SigningPayload> {
@@ -27,8 +31,8 @@ export async function consentSigningAction(token: string) {
   return apiPost<{ ok: true }>(`/sign/${token}/consent`);
 }
 
-export async function sendSigningOtpAction(token: string) {
-  return apiPost<{ ok: true }>(`/sign/${token}/otp/send`);
+export async function sendSigningOtpAction(token: string, force = false) {
+  return apiPost<{ ok: true; sent?: boolean }>(`/sign/${token}/otp/send`, { force });
 }
 
 export async function verifySigningOtpAction(token: string, code: string) {

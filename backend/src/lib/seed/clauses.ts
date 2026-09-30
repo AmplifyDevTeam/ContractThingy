@@ -13,9 +13,10 @@ function cv(
   title: string,
   category: string,
   legalText: string,
-  extra?: Partial<Clause>,
+  extra?: Partial<Clause> & { version?: number; versionCreatedAt?: string; changeNotes?: string },
 ): ClauseSeed {
-  const versionId = `cv_${id}_v1`;
+  const versionNumber = extra?.version ?? 1;
+  const versionId = `cv_${id}_v${versionNumber}`;
   return {
     clause: {
       id,
@@ -23,7 +24,7 @@ function cv(
       category,
       description: extra?.description ?? title,
       currentVersionId: versionId,
-      currentVersion: 1,
+      currentVersion: versionNumber,
       status: extra?.status ?? "approved",
       tags: extra?.tags ?? [category.toLowerCase()],
       applicableDocumentTypes: extra?.applicableDocumentTypes ?? [
@@ -43,17 +44,50 @@ function cv(
     version: {
       id: versionId,
       clauseId: id,
-      version: 1,
+      version: versionNumber,
       status: "approved",
       legalText,
       createdBy: actor,
       approvedBy: actor,
-      createdAt,
+      createdAt: extra?.versionCreatedAt ?? createdAt,
       effectiveDate: "2026-01-15",
-      changeNotes: "Initial approved wording.",
+      changeNotes: extra?.changeNotes ?? "Initial approved wording.",
     },
   };
 }
+
+const WORKING_HOURS_V1 = `<p>The Employee's ordinary working schedule is:</p>
+<ul>
+<li>Days: as specified in the working schedule</li>
+<li>Hours: {{schedule.summary}}</li>
+<li>Time zone: {{workingSchedule.timezone}}</li>
+</ul>
+<p>The Employee may be required to work additional hours reasonably necessary to perform the role. Any urgent-availability requirement will be communicated in writing.</p>`;
+
+const WORKING_HOURS_V2 = `<p>The Employee's ordinary working schedule is:</p>
+<ul>
+<li>Days: {{schedule.days}}</li>
+<li>Hours: {{schedule.hours}}</li>
+<li>Work arrangement: {{schedule.mode}}</li>
+<li>Time zone: {{workingSchedule.timezone}}</li>
+</ul>
+<p>The Employee may be required to work additional hours reasonably necessary to perform the role. Any urgent-availability requirement will be communicated in writing.</p>`;
+
+/** Superseded wording kept so documents pinned to older versions still render exactly. */
+const LEGACY_VERSIONS: ClauseVersion[] = [
+  {
+    id: "cv_cl_working_hours_v1",
+    clauseId: "cl_working_hours",
+    version: 1,
+    status: "archived",
+    legalText: WORKING_HOURS_V1,
+    createdBy: actor,
+    approvedBy: actor,
+    createdAt,
+    effectiveDate: "2026-01-15",
+    changeNotes: "Initial approved wording.",
+  },
+];
 
 export const CLAUSE_SEEDS: ClauseSeed[] = [
   cv(
@@ -158,13 +192,12 @@ export const CLAUSE_SEEDS: ClauseSeed[] = [
     "cl_working_hours",
     "Working Hours",
     "Schedule",
-    `<p>The Employee's ordinary working schedule is:</p>
-<ul>
-<li>Days: as specified in the working schedule</li>
-<li>Hours: {{schedule.summary}}</li>
-<li>Time zone: {{workingSchedule.timezone}}</li>
-</ul>
-<p>The Employee may be required to work additional hours reasonably necessary to perform the role. Any urgent-availability requirement will be communicated in writing.</p>`,
+    WORKING_HOURS_V2,
+    {
+      version: 2,
+      versionCreatedAt: "2026-09-30T00:00:00.000Z",
+      changeNotes: "List working days, hours, and work mode on separate lines.",
+    },
   ),
   cv(
     "cl_remote_work",
@@ -402,6 +435,6 @@ export const CLAUSE_SEEDS: ClauseSeed[] = [
 export function seedClauses(): { clauses: Clause[]; versions: ClauseVersion[] } {
   return {
     clauses: CLAUSE_SEEDS.map((item) => item.clause),
-    versions: CLAUSE_SEEDS.map((item) => item.version),
+    versions: [...CLAUSE_SEEDS.map((item) => item.version), ...LEGACY_VERSIONS],
   };
 }

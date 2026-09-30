@@ -11,15 +11,17 @@ function lanDevOrigins() {
   return [...hosts];
 }
 
-const lanOrigins = lanDevOrigins();
+// LAN origins are only trusted in local development — never in production builds.
+const isDev = process.env.NODE_ENV !== "production";
+const lanOrigins = isDev ? lanDevOrigins() : [];
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: lanOrigins,
-  experimental: {
-    serverActions: {
-      allowedOrigins: lanOrigins,
-    },
-  },
+  ...(isDev
+    ? {
+        allowedDevOrigins: lanOrigins,
+        experimental: { serverActions: { allowedOrigins: lanOrigins } },
+      }
+    : {}),
   // Allow Firebase Google popup to close and return the credential.
   async headers() {
     return [
@@ -27,6 +29,9 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: [
           { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
         ],
       },
     ];

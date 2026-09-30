@@ -428,6 +428,8 @@ export const contractDocumentSchema = z.object({
   relatedDocumentId: z.string().optional(),
   draftPdfPath: z.string().optional(),
   finalPdfPath: z.string().optional(),
+  /** "application/pdf", or "text/html" when PDF rendering was unavailable at finalization. */
+  finalContentType: z.string().optional(),
   sha256: z.string().optional(),
   ownerId: z.string(),
   ownerName: z.string(),
@@ -442,6 +444,8 @@ export const contractDocumentSchema = z.object({
   voidedAt: z.string().optional(),
   voidReason: z.string().optional(),
   generationLock: z.string().optional(),
+  /** Client-supplied idempotency key for POST /generate. */
+  requestId: z.string().optional(),
 });
 
 export const documentVersionSchema = z.object({
@@ -460,6 +464,8 @@ export const signingRequestSchema = z.object({
   tokenHash: z.string(),
   tokenHint: z.string(),
   token: z.string().optional(),
+  /** Signing token encrypted with the server secret, so staff can re-copy the same link. */
+  tokenEnc: z.string().optional(),
   recipientName: z.string(),
   recipientEmail: z.string().email(),
   status: z.enum([
@@ -475,6 +481,8 @@ export const signingRequestSchema = z.object({
   otpHash: z.string().optional(),
   otpExpiresAt: z.string().optional(),
   otpVerifiedAt: z.string().optional(),
+  otpAttempts: z.number().int().default(0),
+  otpSentAt: z.string().optional(),
   expiresAt: z.string(),
   recipientSignedAt: z.string().optional(),
   companySignedAt: z.string().optional(),
@@ -536,6 +544,8 @@ export const sourceDocumentSchema = z.object({
   detectedType: z.string().optional(),
   analysisJson: z.record(z.string(), z.unknown()).optional(),
   analysisConfidence: z.number().min(0).max(1).optional(),
+  personId: z.string().optional(),
+  companyId: z.string().optional(),
 });
 
 export const knowledgeFindingSchema = z.object({
@@ -712,6 +722,7 @@ export const generateDocumentInputSchema = z.object({
   enabledOptionalClauseIds: z.array(z.string()).default([]),
   disabledClauseIds: z.array(z.string()).default([]),
   themeId: z.enum(THEME_IDS).optional(),
+  requestId: z.string().max(100).optional(),
 });
 
 export const employmentVariablesSchema = z.object({

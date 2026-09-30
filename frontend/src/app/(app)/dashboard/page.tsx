@@ -3,7 +3,7 @@ import { format, subMonths } from "date-fns";
 import { PageHeader } from "@/components/page-header";
 import { DashboardBoard, type DashboardStats } from "@/components/dashboard/board";
 import { Button } from "@/components/ui/button";
-import { requirePermission } from "@/lib/auth/session";
+import { can, requirePermission } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api";
 import {
   buildInsightSnapshot,
@@ -44,7 +44,8 @@ function slimDoc(doc: ContractDocument) {
 }
 
 export default async function DashboardPage() {
-  await requirePermission("documents.read");
+  const session = await requirePermission("documents.read");
+  const canCreate = can(session, "documents.create");
   const data = await apiGet<{
     documents: ContractDocument[];
     requests: SigningRequest[];
@@ -170,9 +171,11 @@ export default async function DashboardPage() {
         title="Today"
         description={format(now, "EEEE d MMMM yyyy")}
         actions={
-          <Button asChild>
-            <Link href="/generate">Generate document</Link>
-          </Button>
+          canCreate ? (
+            <Button asChild>
+              <Link href="/generate">Generate document</Link>
+            </Button>
+          ) : null
         }
       />
       <DashboardBoard stats={stats} />

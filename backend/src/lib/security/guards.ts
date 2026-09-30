@@ -27,6 +27,29 @@ export function clientIp(header: string | undefined): string {
   return header?.split(",")[0]?.trim() || "unknown";
 }
 
+function safeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+/**
+ * The real client behind a request. Calls from the Next.js frontend (server actions) arrive
+ * from Vercel's servers; the frontend forwards the browser's IP/UA in x-client-ip / x-client-ua,
+ * trusted only when x-proxy-secret matches PROXY_SHARED_SECRET.
+ */
+export function requestClient(header: (name: string) => string | undefined): { ip: string; ua?: string } {
+  const secret = process.env.PROXY_SHARED_SECRET?.trim();
+  const presented = header("x-proxy-secret");
+  if (secret && presented && safeEqual(secret, presented)) {
+    return {
+      ip: header("x-client-ip")?.trim() || clientIp(header("x-forwarded-for")),
+      ua: header("x-client-ua") ?? header("user-agent") ?? undefined,
+    };
+  }
+  return { ip: clientIp(header("x-forwarded-for")), ua: header("user-agent") ?? undefined };
+}
+
 export function hashOtp(code: string): string {
   return createHash("sha256").update(code.trim()).digest("hex");
 }
@@ -72,6 +95,22 @@ const SAFE_MESSAGES = new Set([
   "This party has already signed",
   "This signing link has been revoked",
   "This signing link has expired",
+  "Too many incorrect codes. Request a new code.",
+  "Recipient must sign first",
+  "Company has already signed",
+  "No signing request found",
+  "Cannot extend this link",
+  "Design is locked once a document has been sent",
+  "PDF rendering is unavailable on this deployment",
+  "The default development password cannot be used in production. Reset this account's password.",
+  "Signed copy is not available yet",
+  "This agreement is already signed",
+  "Signature must be a PNG or JPEG image",
+  "Signature image is too large",
+  "Signature image is empty",
+  "Only documents awaiting review can be approved",
+  "Finalized documents cannot be voided",
+  "Recipient name and email are required",
 ]);
 
 export function publicErrorMessage(err: unknown, fallback = "Request failed"): string {

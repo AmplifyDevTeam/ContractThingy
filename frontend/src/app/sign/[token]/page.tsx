@@ -121,7 +121,7 @@ export default function SignPage() {
           <p className="mt-4 text-muted-foreground">
             {data.documentName}
             <br />
-            Amplify Media Technologies
+            {data.companyName || brand.name}
             <br />
             {data.partyName}
           </p>
@@ -131,7 +131,17 @@ export default function SignPage() {
             <p className="mt-4 text-sm">Your signature has been recorded. Amplify will countersign to finalize.</p>
           )}
           {data.sha256 ? (
-            <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground">{data.sha256}</p>
+            <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground">SHA-256 {data.sha256}</p>
+          ) : null}
+          {data.finalized && data.signedCopyAvailable ? (
+            <a
+              href={`/api/sign/${encodeURIComponent(token)}/pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-6 inline-flex w-fit rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground"
+            >
+              Download signed copy
+            </a>
           ) : null}
         </div>
       </StepTransition>
@@ -189,8 +199,8 @@ export default function SignPage() {
             disabled={busy}
             onClick={() => {
               setBusy(true);
-              void sendSigningOtpAction(token)
-                .then(() => toast.success("Code sent"))
+              void sendSigningOtpAction(token, true)
+                .then((result) => toast.success(result.sent === false ? "A code was sent recently — check your inbox" : "New code sent"))
                 .catch((error: Error) => toast.error(error.message))
                 .finally(() => setBusy(false));
             }}
@@ -204,6 +214,12 @@ export default function SignPage() {
 
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-6 py-10">
+      {data.preview ? (
+        <p className="mb-6 rounded-md border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
+          Staff preview — you are signed in to ContractOS, so opening this page is not recorded as the recipient
+          viewing it. Don&apos;t sign here on the recipient&apos;s behalf.
+        </p>
+      ) : null}
       <div className="mb-8 flex items-start justify-between gap-4">
         <div>
           <BrandMark
@@ -220,7 +236,12 @@ export default function SignPage() {
         <ThemeToggle compact />
       </div>
       {data.html ? (
-        <iframe title="Agreement" className="mb-6 h-[70vh] w-full rounded-md border border-border bg-muted" srcDoc={data.html} />
+        <iframe
+          title="Agreement"
+          sandbox=""
+          className="mb-6 h-[70vh] w-full rounded-md border border-border bg-muted"
+          srcDoc={data.html}
+        />
       ) : (
         <p className="mb-6 text-sm text-muted-foreground">Agreement content unlocks after verification.</p>
       )}

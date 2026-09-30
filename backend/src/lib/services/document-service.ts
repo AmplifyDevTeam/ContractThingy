@@ -15,6 +15,8 @@ import type {
   DocumentVersion,
   GenerateDocumentInput,
   Person,
+  SignatureEvent,
+  SigningRequest,
   StoredSignature,
   Template,
   TemplateVersion,
@@ -111,6 +113,13 @@ export async function generateDocument(
 ): Promise<ContractDocument> {
   const parsed = generateDocumentInputSchema.parse(input);
 
+  // Idempotency: a retried request (e.g. after a client timeout) returns the same document.
+  if (parsed.requestId) {
+    const existing = await store.whereEquals<ContractDocument>("documents", "requestId", parsed.requestId);
+    const mine = existing.find((item) => item.ownerId === actor.userId);
+    if (mine) return mine;
+  }
+
   return store.transact(async (tx) => {
     const preview = await previewFromInput(tx, parsed);
     const person = parsed.personId ? await tx.getDoc<Person>("people", parsed.personId) : null;
@@ -120,11 +129,8 @@ export async function generateDocument(
     const company = await tx.getSettings<CompanySettings>("company");
     const year = new Date().getFullYear();
     const prefix = preview.template.documentType;
-    const sequences = await tx.getSettings<Record<string, number>>("sequences");
-    const seqKey = `${year}-${prefix}`;
-    const next = (sequences[seqKey] ?? 0) + 1;
-    sequences[seqKey] = next;
-    await tx.setSettings("sequences", sequences);
+    // Atomic counter: concurrent generations can't receive the same readable ID.
+    const next = await tx.nextSequence(`${year}-${prefix}`);
 
     const readableId = nextReadableId({
       documentType: preview.template.documentType,
@@ -186,6 +192,7 @@ export async function generateDocument(
       updatedAt: now,
       lastActivityAt: now,
       generationLock: `${documentId}:${now}`,
+      requestId: parsed.requestId,
       approvedAt: needsReview ? undefined : now,
       approvedBy: needsReview ? undefined : actor.userId,
     };
@@ -282,8 +289,8 @@ export async function approveDocument(
 ): Promise<ContractDocument> {
   const document = await store.getDoc<ContractDocument>("documents", documentId);
   if (!document) throw new Error("Document not found");
-  if (document.status === "FINALIZED" || document.status === "VOIDED") {
-    throw new Error("Finalized or voided documents cannot be approved again");
+  if (!["DRAFT", "CONFIGURING", "REVIEW_REQUIRED"].includes(document.status)) {
+    throw new Error("Only documents awaiting review can be approved");
   }
   const now = nowIso();
   const next: ContractDocument = {
@@ -314,7 +321,15 @@ export async function voidDocument(
   const document = await store.getDoc<ContractDocument>("documents", documentId);
   if (!document) throw new Error("Document not found");
   if (document.status === "FINALIZED") throw new Error("Finalized documents cannot be voided");
+  if (document.status === "VOIDED") return document;
   const now = nowIso();
+  // A voided agreement must not stay signable.
+  const requests = await store.whereEquals<SigningRequest>("signingRequests", "documentId", documentId);
+  for (const request of requests) {
+    if (request.status === "revoked" || request.status === "completed") continue;
+    const { tokenEnc: _enc, ...rest } = request;
+    await store.setDoc("signingRequests", { ...rest, status: "revoked" });
+  }
   const next: ContractDocument = {
     ...document,
     status: "VOIDED",
@@ -364,22 +379,51 @@ export async function assembleCurrentHtml(
     (await store.listDocs<DocumentTheme>("themes")).find((item) => item.id === themeId) ??
     themeById(themeId) ??
     (await store.listDocs<DocumentTheme>("themes"))[0];
-  const companyForPdf = await companyWithEmbeddedAssets(store, company, theme.background === "dark");
+  // Company identity as it was when the document was generated (address, signatory, NTN…).
+  const snap = version.snapshot.companySnapshot;
+  const companyAtGeneration: CompanySettings = snap
+    ? {
+        ...company,
+        legalName: snap.legalName || company.legalName,
+        displayName: snap.displayName || company.displayName,
+        primaryAddress: (snap.address as CompanySettings["primaryAddress"]) ?? company.primaryAddress,
+        phone: snap.phone ?? company.phone,
+        email: snap.email ?? company.email,
+        website: snap.website ?? company.website,
+        authorizedSignatory: snap.authorizedSignatory || company.authorizedSignatory,
+        authorizedSignatoryTitle: snap.authorizedSignatoryTitle || company.authorizedSignatoryTitle,
+        ntn: snap.ntn ?? company.ntn,
+      }
+    : company;
+  const companyForPdf = await companyWithEmbeddedAssets(store, companyAtGeneration, theme.background === "dark");
   const person =
     (version.snapshot.personSnapshot as Person | undefined) ??
     (document.personId ? await store.getDoc<Person>("people", document.personId) : null);
   const client =
     (version.snapshot.clientSnapshot as CompanyRecord | undefined) ??
     (document.companyId ? await store.getDoc<CompanyRecord>("companies", document.companyId) : null);
-  const signatures = await store.queryDocs<StoredSignature>(
-    "storedSignatures",
-    (item) => item.documentId === documentId,
-  );
+  const signatures = await store.whereEquals<StoredSignature>("storedSignatures", "documentId", documentId);
   const recipient = signatures.find((item) => item.signerRole === "recipient");
   const companySig = signatures.find((item) => item.signerRole === "company");
   const recipientImage = recipient ? await store.getFile(recipient.imagePath) : null;
   const companyImage = companySig ? await store.getFile(companySig.imagePath) : null;
   const finalizedAt = options?.finalizedAt ?? document.finalizedAt;
+  let viewedAt: string | undefined;
+  let consentAt: string | undefined;
+  let signerIp: string | undefined;
+  if (finalizedAt) {
+    const requestId = recipient?.signingRequestId;
+    const [request, events] = await Promise.all([
+      requestId ? store.getDoc<SigningRequest>("signingRequests", requestId) : Promise.resolve(null),
+      store.whereEquals<SignatureEvent>("signatureEvents", "documentId", documentId),
+    ]);
+    const forRequest = events
+      .filter((event) => !requestId || event.signingRequestId === requestId)
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    viewedAt = forRequest.find((event) => event.type === "document_opened")?.timestamp;
+    consentAt = request?.consentAcceptedAt;
+    signerIp = forRequest.find((event) => event.type === "signature_completed")?.ipAddress;
+  }
 
   return assembleDocument({
     template,
@@ -391,7 +435,9 @@ export async function assembleCurrentHtml(
     person,
     client,
     variables: version.snapshot.resolvedVariables,
-    enabledOptionalClauseIds: version.snapshot.includedClauseIds,
+    // Render exactly what was generated: pinned clause versions and sections.
+    pinnedClauseVersionIds: version.snapshot.clauseVersionIds,
+    pinnedSectionIds: version.snapshot.includedSectionIds,
     documentId: document.id,
     readableId: document.readableId,
     signatures:
@@ -408,7 +454,7 @@ export async function assembleCurrentHtml(
               : undefined,
             company: companySig
               ? {
-                  name: company.authorizedSignatory,
+                  name: companyAtGeneration.authorizedSignatory,
                   imageDataUrl: companyImage
                     ? bytesToDataUrl(companyImage.bytes, companyImage.contentType)
                     : undefined,
@@ -421,6 +467,9 @@ export async function assembleCurrentHtml(
       ? {
           createdAt: document.createdAt,
           sentAt: document.sentAt,
+          viewedAt,
+          consentAt,
+          signerIp,
           recipientSignedAt: recipient?.signedAt,
           companySignedAt: companySig?.signedAt,
           finalizedAt,

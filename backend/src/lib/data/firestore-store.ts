@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase/admin";
-import { buildBootstrapState } from "@/lib/seed/state";
+import { LIBRARY_REVISION, buildBootstrapState } from "@/lib/seed/state";
 import type { CollectionName, DataStore, SettingsKey } from "@/lib/data/store";
 
 const SEEDED = new Set<string>();
@@ -41,6 +42,27 @@ const BOOTSTRAP_COLLECTIONS: CollectionName[] = [
   "roleProfiles",
   "notifications",
 ];
+
+/**
+ * Library collections change rarely (seeded, edited only by admins), but are read on almost
+ * every request. Cache them per serverless instance to cut Firestore reads.
+ */
+const CACHEABLE = new Set<CollectionName>([
+  "templates",
+  "templateVersions",
+  "clauses",
+  "clauseVersions",
+  "documentTypes",
+  "themes",
+  "roleProfiles",
+  "documentPacks",
+  "knowledgeFindings",
+  "sourceDocuments",
+]);
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const listCache = new Map<string, { at: number; items: unknown[] }>();
+const settingsCache = new Map<string, { at: number; value: unknown }>();
+const SETTINGS_TTL_MS = 30 * 1000;
 
 function fileDocId(path: string): string {
   return createHash("sha256").update(path).digest("hex").slice(0, 40);
@@ -86,15 +108,50 @@ export class FirestoreStore implements DataStore {
     }
   }
 
+  /** Upsert seeded library collections when the code's library revision is newer. */
+  private async syncLibrary(): Promise<void> {
+    const orgRef = adminDb().collection("organizations").doc(this.orgId);
+    const orgSnap = await orgRef.get();
+    const current = Number((orgSnap.data() as { libraryRevision?: number } | undefined)?.libraryRevision ?? 1);
+    if (current >= LIBRARY_REVISION) return;
+    const seed = buildBootstrapState(this.orgId);
+    const library: CollectionName[] = [
+      "templates",
+      "templateVersions",
+      "clauses",
+      "clauseVersions",
+      "themes",
+      "roleProfiles",
+      "documentTypes",
+    ];
+    for (const name of library) {
+      const items = seed[name] as Array<{ id: string }>;
+      let batch = adminDb().batch();
+      let count = 0;
+      for (const item of items) {
+        batch.set(this.col(name).doc(item.id), item);
+        count += 1;
+        if (count % 400 === 0) {
+          await batch.commit();
+          batch = adminDb().batch();
+        }
+      }
+      await batch.commit();
+      listCache.delete(`${this.orgId}:${name}`);
+    }
+    await orgRef.set({ libraryRevision: LIBRARY_REVISION, librarySyncedAt: new Date().toISOString() }, { merge: true });
+  }
+
   private async ensureSeed(): Promise<void> {
     if (SEEDED.has(this.orgId)) return;
     // Fast path: healthy org already has company settings — skip collection scans.
     const company = await this.settingsCol().doc("company").get();
-    if (company.exists) {
-      SEEDED.add(this.orgId);
-      return;
+    if (!company.exists) await this.repairBootstrap();
+    try {
+      await this.syncLibrary();
+    } catch (err) {
+      console.error("[firestore] library sync failed", err instanceof Error ? err.message : err);
     }
-    await this.repairBootstrap();
     SEEDED.add(this.orgId);
   }
 
@@ -107,12 +164,43 @@ export class FirestoreStore implements DataStore {
   async setDoc<T extends { id: string }>(collection: CollectionName, data: T): Promise<void> {
     await this.ensureSeed();
     await this.col(collection).doc(data.id).set(data);
+    listCache.delete(`${this.orgId}:${collection}`);
   }
 
   async listDocs<T>(collection: CollectionName): Promise<T[]> {
     await this.ensureSeed();
+    const key = `${this.orgId}:${collection}`;
+    if (CACHEABLE.has(collection)) {
+      const hit = listCache.get(key);
+      if (hit && Date.now() - hit.at < CACHE_TTL_MS) return [...(hit.items as T[])];
+    }
     const snap = await this.col(collection).get();
+    const items = snap.docs.map((doc) => doc.data() as T);
+    if (CACHEABLE.has(collection)) listCache.set(key, { at: Date.now(), items });
+    return items;
+  }
+
+  async whereEquals<T>(collection: CollectionName, field: string, value: string | number | boolean): Promise<T[]> {
+    await this.ensureSeed();
+    if (CACHEABLE.has(collection)) {
+      const all = await this.listDocs<Record<string, unknown>>(collection);
+      return all.filter((item) => item[field] === value) as T[];
+    }
+    const snap = await this.col(collection).where(field, "==", value).get();
     return snap.docs.map((doc) => doc.data() as T);
+  }
+
+  async nextSequence(key: string): Promise<number> {
+    await this.ensureSeed();
+    const ref = this.settingsCol().doc("sequences");
+    const next = await adminDb().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const current = Number((snap.data() as Record<string, number> | undefined)?.[key] ?? 0);
+      tx.set(ref, { [key]: FieldValue.increment(1) }, { merge: true });
+      return current + 1;
+    });
+    settingsCache.delete(`${this.orgId}:sequences`);
+    return next;
   }
 
   async queryDocs<T>(collection: CollectionName, predicate: (item: T) => boolean): Promise<T[]> {
@@ -122,10 +210,14 @@ export class FirestoreStore implements DataStore {
 
   async deleteDoc(collection: CollectionName, id: string): Promise<void> {
     await this.col(collection).doc(id).delete();
+    listCache.delete(`${this.orgId}:${collection}`);
   }
 
   async getSettings<T>(key: SettingsKey): Promise<T> {
     await this.ensureSeed();
+    const cacheKey = `${this.orgId}:${key}`;
+    const hit = settingsCache.get(cacheKey);
+    if (hit && key !== "sequences" && Date.now() - hit.at < SETTINGS_TTL_MS) return hit.value as T;
     const snap = await this.settingsCol().doc(key).get();
     if (!snap.exists) {
       const seed = buildBootstrapState(this.orgId);
@@ -133,11 +225,14 @@ export class FirestoreStore implements DataStore {
       await this.settingsCol().doc(key).set(value as Record<string, unknown>);
       return value as T;
     }
-    return snap.data() as T;
+    const value = snap.data() as T;
+    settingsCache.set(cacheKey, { at: Date.now(), value });
+    return value;
   }
 
   async setSettings<T>(key: SettingsKey, data: T): Promise<void> {
     await this.settingsCol().doc(key).set(data as Record<string, unknown>);
+    settingsCache.delete(`${this.orgId}:${key}`);
   }
 
   async transact<T>(fn: (store: DataStore) => Promise<T>): Promise<T> {

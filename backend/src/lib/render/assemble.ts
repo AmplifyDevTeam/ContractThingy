@@ -1,6 +1,6 @@
 import { resolveBrandingAssets, formatCompanyAddress, websiteHost } from "@/lib/branding/identity";
 import { evaluateRuleGroup, evaluateRules } from "@/lib/rules/engine";
-import { interpolate } from "@/lib/render/interpolate";
+import { escapeHtml, interpolate } from "@/lib/render/interpolate";
 import type {
   Clause,
   ClauseVersion,
@@ -30,6 +30,14 @@ export type AssembleInput = {
   variables: Record<string, unknown>;
   enabledOptionalClauseIds?: string[];
   disabledClauseIds?: string[];
+  /**
+   * Re-render mode for an existing document: exactly these clause versions (and, if given,
+   * sections) are rendered, ignoring rules, toggles and later library edits.
+   */
+  pinnedClauseVersionIds?: string[];
+  pinnedSectionIds?: string[];
+  /** Override how logo/signature/seal paths become <img src> (browser previews use API URLs). */
+  resolveAssets?: AssetResolver;
   documentId?: string;
   readableId?: string;
   signatures?: {
@@ -47,8 +55,14 @@ export type AssembleInput = {
     sha256?: string;
     recipientName?: string;
     recipientEmail?: string;
+    signerIp?: string;
   };
 };
+
+export type AssetResolver = (
+  company: CompanySettings,
+  isDark: boolean,
+) => { logo: string; signature: string; seal: string };
 
 export type AssembledDocument = {
   html: string;
@@ -88,6 +102,9 @@ export function assembleDocument(input: AssembleInput): AssembledDocument {
     variables,
     enabledOptionalClauseIds = [],
     disabledClauseIds = [],
+    pinnedClauseVersionIds,
+    pinnedSectionIds,
+    resolveAssets,
     documentId,
     readableId,
     signatures,
@@ -135,32 +152,47 @@ export function assembleDocument(input: AssembleInput): AssembledDocument {
 
   const sortedSections = [...templateVersion.sections].sort((a, b) => a.order - b.order);
 
+  const pinned = pinnedClauseVersionIds?.length ? new Set(pinnedClauseVersionIds) : null;
+  const pinnedSections = pinnedSectionIds?.length ? new Set(pinnedSectionIds) : null;
+
   for (const section of sortedSections) {
-    if (evaluated.excludeSectionIds.has(section.id)) continue;
-    if (section.includeWhen && !evaluateRuleGroup(section.includeWhen, context)) continue;
-    if (section.optional && !evaluated.includeSectionIds.has(section.id) && !section.required) {
-      const hasForcedClause = section.clauseIds.some((id) => evaluated.includeClauseIds.has(id));
-      if (!hasForcedClause) continue;
-    }
-
     const clauseHtml: string[] = [];
-    for (const clauseId of section.clauseIds) {
-      if (disabledClauseIds.includes(clauseId)) continue;
-      if (evaluated.excludeClauseIds.has(clauseId)) continue;
-      const clause = clausesById.get(clauseId);
-      if (!clause) continue;
-      if (clause.status === "optional" && !enabledOptionalClauseIds.includes(clauseId) && !evaluated.includeClauseIds.has(clauseId)) {
-        continue;
+    if (pinned) {
+      if (pinnedSections && !pinnedSections.has(section.id)) continue;
+      for (const clauseId of section.clauseIds) {
+        const version = clauseVersions.find((item) => item.clauseId === clauseId && pinned.has(item.id));
+        if (!version) continue;
+        includedClauseIds.push(clauseId);
+        usedClauseVersionIds.push(version.id);
+        clauseHtml.push(
+          `<div class="clause" data-clause-id="${clauseId}" data-clause-version="${version.id}">${interpolate(version.legalText, context)}</div>`,
+        );
       }
-      const version = versionForClause(clause, clauseVersions);
-      if (!version || version.status === "archived") continue;
-      if (version.conditions && !evaluateRuleGroup(version.conditions, context)) continue;
+    } else {
+      if (evaluated.excludeSectionIds.has(section.id)) continue;
+      if (section.includeWhen && !evaluateRuleGroup(section.includeWhen, context)) continue;
+      if (section.optional && !evaluated.includeSectionIds.has(section.id) && !section.required) {
+        const hasForcedClause = section.clauseIds.some((id) => evaluated.includeClauseIds.has(id));
+        if (!hasForcedClause) continue;
+      }
+      for (const clauseId of section.clauseIds) {
+        if (disabledClauseIds.includes(clauseId)) continue;
+        if (evaluated.excludeClauseIds.has(clauseId)) continue;
+        const clause = clausesById.get(clauseId);
+        if (!clause) continue;
+        if (clause.status === "optional" && !enabledOptionalClauseIds.includes(clauseId) && !evaluated.includeClauseIds.has(clauseId)) {
+          continue;
+        }
+        const version = versionForClause(clause, clauseVersions);
+        if (!version || version.status === "archived") continue;
+        if (version.conditions && !evaluateRuleGroup(version.conditions, context)) continue;
 
-      includedClauseIds.push(clause.id);
-      usedClauseVersionIds.push(version.id);
-      clauseHtml.push(
-        `<div class="clause" data-clause-id="${clause.id}" data-clause-version="${version.id}">${interpolate(version.legalText, context)}</div>`,
-      );
+        includedClauseIds.push(clause.id);
+        usedClauseVersionIds.push(version.id);
+        clauseHtml.push(
+          `<div class="clause" data-clause-id="${clause.id}" data-clause-version="${version.id}">${interpolate(version.legalText, context)}</div>`,
+        );
+      }
     }
 
     if (clauseHtml.length === 0 && !section.required) continue;
@@ -171,7 +203,7 @@ export function assembleDocument(input: AssembleInput): AssembledDocument {
     sectionsHtml.push(`
       <section class="doc-section" id="${section.id}">
         <div class="section-lead">
-          <h2><span class="section-num">${padded}</span> ${section.title}</h2>
+          <h2><span class="section-num">${padded}</span> ${escapeHtml(section.title)}</h2>
           ${leadClause ?? ""}
         </div>
         ${restClauses.join("\n")}
@@ -190,6 +222,7 @@ export function assembleDocument(input: AssembleInput): AssembledDocument {
     bodyHtml,
     signatures,
     auditCertificate,
+    resolveAssets,
   });
 
   return {
@@ -212,35 +245,54 @@ export function wrapDocumentHtml(args: {
   bodyHtml: string;
   signatures?: AssembleInput["signatures"];
   auditCertificate?: AssembleInput["auditCertificate"];
+  resolveAssets?: AssetResolver;
 }): string {
   const {
     theme,
-    company,
+    company: rawCompany,
     template,
-    readableId,
-    partyName,
+    readableId: rawReadableId,
+    partyName: rawPartyName,
     partyKind = "party",
     bodyHtml,
     signatures,
     auditCertificate,
+    resolveAssets = resolveBrandingAssets,
   } = args;
   const isDark = theme.background === "dark";
-  const title = template.name;
-  const assets = resolveBrandingAssets(company, isDark);
+  // Everything interpolated below is data — escape it once here.
+  const safe = (value: unknown) => escapeHtml(String(value ?? ""));
+  const company: CompanySettings = {
+    ...rawCompany,
+    legalName: safe(rawCompany.legalName),
+    displayName: safe(rawCompany.displayName),
+    registrationDetails: safe(rawCompany.registrationDetails),
+    authorizedSignatory: safe(rawCompany.authorizedSignatory),
+    authorizedSignatoryTitle: safe(rawCompany.authorizedSignatoryTitle),
+    email: safe(rawCompany.email),
+    phone: safe(rawCompany.phone),
+    usPhone: rawCompany.usPhone ? safe(rawCompany.usPhone) : rawCompany.usPhone,
+    ntn: rawCompany.ntn ? safe(rawCompany.ntn) : rawCompany.ntn,
+    sealPath: rawCompany.sealPath ? safe(rawCompany.sealPath) : rawCompany.sealPath,
+  };
+  const partyName = safe(rawPartyName);
+  const readableId = safe(rawReadableId);
+  const title = safe(template.name);
+  const rawAssets = resolveAssets(rawCompany, isDark);
+  const assets = { logo: safe(rawAssets.logo), signature: safe(rawAssets.signature), seal: safe(rawAssets.seal) };
   const signatureBlock = renderSignatures(
     theme,
     company,
     partyName,
     partyKind,
     signatures,
-    assets.signature,
     company.sealPath || assets.seal,
   );
   const certificate = auditCertificate ? renderAuditCertificate(auditCertificate, readableId, title, partyName) : "";
-  const address = formatCompanyAddress(company);
+  const address = safe(formatCompanyAddress(rawCompany));
   const partyLabel = partyKind === "employee" ? "Employee" : partyKind === "client" ? "Client" : "Counterparty";
   const companyLabel = partyKind === "employee" ? "Employer" : "Service Provider";
-  const host = websiteHost(company.website);
+  const host = safe(websiteHost(rawCompany.website));
   const footerBits = [company.usPhone, company.phone, company.email, host].filter(Boolean);
   const footerText = footerBits.join(" · ");
 
@@ -293,15 +345,18 @@ function renderSignatures(
   partyName: string,
   partyKind: "employee" | "client" | "party",
   signatures: AssembleInput["signatures"] | undefined,
-  defaultCompanySignature: string,
   sealSrc: string,
 ): string {
   const layout = theme.signatureLayout === "stacked" ? "stacked" : "side";
+  const attr = (value: string) => escapeHtml(value);
   const recipientSig = signatures?.recipient?.imageDataUrl
-    ? `<img class="sig-img" src="${signatures.recipient.imageDataUrl}" alt="Recipient signature" />`
+    ? `<img class="sig-img" src="${attr(signatures.recipient.imageDataUrl)}" alt="Recipient signature" />`
     : `<div class="sig-line"></div>`;
-  const companyImage = signatures?.company?.imageDataUrl ?? defaultCompanySignature;
-  const companySig = `<img class="sig-img" src="${companyImage}" alt="${company.authorizedSignatory} signature" />`;
+  // The company signature and seal appear only once the company has actually countersigned.
+  const companySigned = Boolean(signatures?.company?.imageDataUrl);
+  const companySig = companySigned
+    ? `<img class="sig-img" src="${attr(signatures!.company!.imageDataUrl!)}" alt="${company.authorizedSignatory} signature" />`
+    : `<div class="sig-line"></div>`;
   const recipientLabel = partyKind === "employee" ? "Employee" : partyKind === "client" ? "Client" : "Recipient";
 
   return `
@@ -317,17 +372,17 @@ function renderSignatures(
           <div class="sig-by">By:</div>
           <div class="sig-name">Name: ${company.authorizedSignatory}</div>
           <div class="sig-title">Title: ${company.authorizedSignatoryTitle}</div>
-          <div class="sig-date">${signatures?.company?.signedAt ? `Date: ${signatures.company.signedAt}` : ""}</div>
+          <div class="sig-date">${signatures?.company?.signedAt ? `Date: ${escapeHtml(signatures.company.signedAt)}` : "Date: ____________________"}</div>
         </div>
         <div class="sig-block">
           <div class="sig-label">${recipientLabel}</div>
           ${recipientSig}
           <div class="sig-by">By:</div>
           <div class="sig-name">Name: ${partyName}</div>
-          <div class="sig-date">${signatures?.recipient?.signedAt ? `Date: ${signatures.recipient.signedAt}` : "Date: ____________________"}</div>
+          <div class="sig-date">${signatures?.recipient?.signedAt ? `Date: ${escapeHtml(signatures.recipient.signedAt)}` : "Date: ____________________"}</div>
         </div>
       </div>
-      <img class="company-seal" src="${sealSrc}" alt="" />
+      ${companySigned ? `<img class="company-seal" src="${sealSrc}" alt="" />` : ""}
     </section>
   `;
 }
@@ -338,18 +393,28 @@ function renderAuditCertificate(
   title: string,
   partyName: string,
 ): string {
+  const when = (value?: string) => {
+    if (!value) return "—";
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
+    if (!match) return escapeHtml(value);
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return `${Number(match[3])} ${months[Number(match[2]) - 1]} ${match[1]}, ${match[4]}:${match[5]} UTC`;
+  };
   const rows: Array<[string, string]> = [
     ["Document ID", readableId],
     ["Document name", title],
-    ["Created", cert.createdAt],
-    ["Sent", cert.sentAt ?? "—"],
-    ["Recipient", `${partyName}${cert.recipientEmail ? ` · ${cert.recipientEmail}` : ""}`],
-    ["Viewed", cert.viewedAt ?? "—"],
-    ["Consent accepted", cert.consentAt ?? "—"],
-    ["Recipient signed", cert.recipientSignedAt ?? "—"],
-    ["Company signed", cert.companySignedAt ?? "—"],
-    ["Finalized", cert.finalizedAt ?? "—"],
-    ["SHA-256", cert.sha256 ?? "Pending finalization"],
+    ["Created", when(cert.createdAt)],
+    ["Sent", when(cert.sentAt)],
+    ["Recipient", `${partyName}${cert.recipientEmail ? ` · ${escapeHtml(cert.recipientEmail)}` : ""}`],
+    ["Viewed", when(cert.viewedAt)],
+    ["Consent accepted", when(cert.consentAt)],
+    ["Recipient signed", `${when(cert.recipientSignedAt)}${cert.signerIp && cert.signerIp !== "unknown" ? ` · IP ${escapeHtml(cert.signerIp)}` : ""}`],
+    ["Company signed", when(cert.companySignedAt)],
+    ["Finalized", when(cert.finalizedAt)],
+    [
+      "Integrity",
+      "The SHA-256 fingerprint of this file is recorded in the ContractOS audit log (a file cannot contain its own fingerprint).",
+    ],
   ];
   return `
     <div class="page certificate">

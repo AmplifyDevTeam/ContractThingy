@@ -3,7 +3,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
 import { Bento, MetaList, Stat, Tile, TileLink } from "@/components/bento";
 import { StatusBadge } from "@/components/status-badge";
-import { requirePermission } from "@/lib/auth/session";
+import { can, requirePermission } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api";
 import { readSourceAnalysis, TYPE_LABELS } from "@/lib/knowledge/library";
 import type { CompanyRecord, KnowledgeFinding, Person, SourceDocument } from "@/lib/types";
@@ -53,7 +53,8 @@ function SourceRow({ doc, n }: { doc: SourceDocument; n: string }) {
 }
 
 export default async function KnowledgePage() {
-  await requirePermission("knowledge.read");
+  const session = await requirePermission("knowledge.read");
+  const canCreate = can(session, "documents.create");
   const { sources, findings, companies, people } = await apiGet<{
     sources: SourceDocument[];
     findings: KnowledgeFinding[];
@@ -102,7 +103,7 @@ export default async function KnowledgePage() {
       />
 
       <Bento className="md:grid-rows-[auto_auto]">
-        <Tile kicker="Source library" span={2} rowSpan={2} action={<TileLink href="/generate">Use in generate</TileLink>}>
+        <Tile kicker="Source library" span={2} rowSpan={2} action={canCreate ? <TileLink href="/generate">Use in generate</TileLink> : undefined}>
           <Stat value={sources.length} label="PDFs ingested" hint="Paraphrased findings only — full legal text stays in the stored PDF." />
           <MetaList
             rows={[

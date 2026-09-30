@@ -5,7 +5,7 @@ import { Bento, MetaList, Stat, Tile, TileLink } from "@/components/bento";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { requirePermission } from "@/lib/auth/session";
+import { can, requirePermission } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api";
 import type { ContractDocument } from "@/lib/types";
 
@@ -14,7 +14,8 @@ export default async function DocumentsPage({
 }: {
   searchParams: Promise<{ q?: string; status?: string }>;
 }) {
-  await requirePermission("documents.read");
+  const session = await requirePermission("documents.read");
+  const canCreate = can(session, "documents.create");
   const { q, status } = await searchParams;
   const { documents: all } = await apiGet<{ documents: ContractDocument[] }>("/documents");
   let documents = all;
@@ -40,9 +41,11 @@ export default async function DocumentsPage({
         title="Documents"
         description="Search generated agreements. Core search is deterministic and does not require AI."
         actions={
-          <Button asChild>
-            <Link href="/generate">Generate</Link>
-          </Button>
+          canCreate ? (
+            <Button asChild>
+              <Link href="/generate">Generate</Link>
+            </Button>
+          ) : null
         }
       />
       <Bento className="md:grid-rows-[auto_auto]">
@@ -50,7 +53,7 @@ export default async function DocumentsPage({
           kicker="Catalogue"
           span={2}
           rowSpan={2}
-          action={<TileLink href="/generate">New</TileLink>}
+          action={canCreate ? <TileLink href="/generate">New</TileLink> : undefined}
         >
           <form className="mt-5 flex flex-wrap gap-2">
             <Input name="q" placeholder="Search ID, party, type…" defaultValue={q} className="max-w-sm" />

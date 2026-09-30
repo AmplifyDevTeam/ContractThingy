@@ -39,7 +39,8 @@ npm run dev:api       # http://localhost:4000
 npm run dev:web       # http://localhost:3000
 ```
 
-Default local login (password, when Firebase web config is empty): `admin@localhost` / `change-me-now`
+Local-only fallback login (when no `BOOTSTRAP_ADMIN_*` is set): `admin@localhost` / `change-me-now`.
+This account and password are **rejected in production** — use Google sign-in or a real bootstrap admin.
 
 ### Auth (Firebase Google + email)
 
@@ -84,6 +85,10 @@ npx firebase deploy --only firestore:rules --project amplify-contractos
 | `AUTH_ALLOWED_DOMAINS` | e.g. `amplifymediatechnologies.com` |
 | `AUTH_OPEN_SIGNUP` | `true` to allow any Firebase user to join |
 | `AUTH_DEFAULT_ROLE` | Role for new self-signups (default `VIEWER`) |
+| `ALLOW_PASSWORD_LOGIN` | Leave unset/`false` in production (Google only) |
+| `EMAIL_PROVIDER` / `EMAIL_API_KEY` / `EMAIL_FROM` | `resend` + API key. **Required** — without it signing links, OTP codes and completion emails are only logged, and client agreements (OTP) cannot be signed |
+| `PROXY_SHARED_SECRET` | Same random value on frontend + backend. Lets the API record the signer's real IP/user-agent (and rate-limit per signer) instead of Vercel's |
+| `CHROMIUM_PACK_URL` | Optional. `@sparticuz/chromium` pack URL if Vercel doesn't bundle the Chromium binary (see PDF notes) |
 
 **Frontend** (`Root Directory: frontend`)
 
@@ -93,8 +98,33 @@ npx firebase deploy --only firestore:rules --project amplify-contractos
 | `APP_URL` | This frontend’s URL |
 | `NEXT_PUBLIC_API_URL` | Same as `API_URL` if needed client-side |
 | `NEXT_PUBLIC_FIREBASE_*` | Web app config for Google / email Auth |
+| `PROXY_SHARED_SECRET` | Same value as the backend |
 
 After deploy: open `https://<backend>/health` once to seed → log in on the frontend.
+
+### Source agreement PDFs (Knowledge → Open PDF)
+
+The historical PDFs live only on the machine that first seeded the workspace (`.data/storage/source-agreements`).
+Upload them to Firestore once:
+
+```bash
+cd backend
+DATA_ADAPTER=firestore npm run upload:sources     # add --force to re-upload
+```
+
+### PDFs on Vercel
+
+The API renders PDFs with `playwright-core` + `@sparticuz/chromium` on Vercel and full Playwright locally.
+If Chromium can't start, downloads fall back to a print-ready page (browser "Save as PDF"), and a finalized
+agreement is stored as an HTML record with its SHA-256 instead of failing. If the function can't find the
+Chromium binary, set `CHROMIUM_PACK_URL` to the matching `chromium-v<version>-pack.x64.tar` release asset from
+github.com/Sparticuz/chromium, and give the API function ≥1 GB memory.
+
+### Library updates
+
+Templates/clauses/themes are seeded from code. Bump `LIBRARY_REVISION` in `backend/src/lib/seed/state.ts` when
+you change them; Firestore upserts the library once per revision. Documents are pinned to the exact clause
+versions they were generated with, so existing agreements never change.
 
 ## Repo layout
 
@@ -106,6 +136,6 @@ backend/    Auth, CRUD, generate, sign, PDF render, AI, email
 
 ## Notes
 
-- AI suggestions are labeled in the UI; approved templates/clauses stay library-sourced.  
+- AI suggestions are labeled in the UI (and hidden when no `GEMINI_API_KEY` is set); approved templates/clauses stay library-sourced.  
 - PDF Chromium on free Vercel may be limited; local Playwright works fully.  
 - Never commit `.env.local` or `backend/.secrets/`.

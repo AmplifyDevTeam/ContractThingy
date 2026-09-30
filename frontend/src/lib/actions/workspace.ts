@@ -73,6 +73,14 @@ export async function getSigningLinkAction(documentId: string) {
   return data.link;
 }
 
+export async function revokeSigningLinkAction(requestId: string) {
+  await apiPost(`/signing/${requestId}/revoke`);
+}
+
+export async function extendSigningLinkAction(requestId: string, days: number) {
+  await apiPost(`/signing/${requestId}/extend`, { days });
+}
+
 export async function countersignAction(
   documentId: string,
   imageDataUrl: string,
@@ -94,7 +102,7 @@ export async function recommendAction(input: {
     ai?: { templateId?: string; reason: string } | null;
   }>("/generate/recommend", {
     ...input,
-    partyType: input.partyType === "client" ? "client" : "employee",
+    partyType: input.partyType === "client" || input.partyType === "company" ? "client" : "employee",
   });
 }
 
@@ -149,6 +157,7 @@ export async function loadGenerateCatalog() {
     documents: ContractDocument[];
     sources: SourceDocument[];
     company: CompanySettings;
+    aiEnabled: boolean;
   }>("/generate/catalog");
 }
 
