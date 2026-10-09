@@ -67,17 +67,28 @@ export function brandingAssets(isDark: boolean) {
   };
 }
 
-/** Prefer tenant-uploaded paths, then legacy logoPath, then Amplify defaults. */
+function isUsableAssetPath(path: string | undefined): path is string {
+  return Boolean(path && path.trim());
+}
+
+/** Prefer an uploaded (org-stored) path over a built-in `/branding/*` default. */
+function preferUploaded(...candidates: Array<string | undefined>): string | undefined {
+  const uploaded = candidates.find((path) => path && isStoredBrandingPath(path));
+  if (uploaded) return uploaded;
+  return candidates.find(isUsableAssetPath);
+}
+
+/** Prefer tenant-uploaded paths (either theme), then legacy logoPath, then Amplify defaults. */
 export function resolveBrandingAssets(company: CompanySettings, isDark: boolean) {
   const defaults = brandingAssets(isDark);
+  const themePreferred = isDark ? company.logoDarkPath : company.logoLightPath;
+  const themeAlternate = isDark ? company.logoLightPath : company.logoDarkPath;
   const logo =
-    (isDark ? company.logoDarkPath : company.logoLightPath) ||
-    company.logoPath ||
-    defaults.logo;
+    preferUploaded(themePreferred, themeAlternate, company.logoPath) || defaults.logo;
   return {
     logo,
-    signature: company.signaturePath || defaults.signature,
-    seal: company.sealPath || defaults.seal,
+    signature: preferUploaded(company.signaturePath) || defaults.signature,
+    seal: preferUploaded(company.sealPath) || defaults.seal,
   };
 }
 

@@ -111,7 +111,8 @@ const SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION
 type Launcher = () => Promise<{
   newPage: () => Promise<{
     emulateMedia: (opts: { media: "print" }) => Promise<void>;
-    setContent: (html: string, opts: { waitUntil: "load" }) => Promise<void>;
+    setContent: (html: string, opts: { waitUntil: "load" | "networkidle" }) => Promise<void>;
+    evaluate: (pageFunction: string | (() => unknown)) => Promise<unknown>;
     pdf: (opts: Record<string, unknown>) => Promise<Buffer>;
   }>;
   close: () => Promise<void>;
@@ -157,6 +158,8 @@ export async function renderPdf(html: string): Promise<Uint8Array> {
     const page = await browser.newPage();
     await page.emulateMedia({ media: "print" });
     await page.setContent(prepared.html, { waitUntil: "load" });
+    // Ensure logo / seal data-URLs finished decoding before rasterizing.
+    await page.evaluate(`Promise.all(Array.from(document.images).map((img) => img.decode ? img.decode().catch(() => {}) : Promise.resolve()))`);
     const pdf = await page.pdf({
       width: prepared.format === "Letter" ? "8.5in" : "210mm",
       height: prepared.format === "Letter" ? "11in" : "297mm",

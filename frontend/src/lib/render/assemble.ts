@@ -30,6 +30,9 @@ export type AssembleInput = {
   variables: Record<string, unknown>;
   enabledOptionalClauseIds?: string[];
   disabledClauseIds?: string[];
+  sectionTitleOverrides?: Record<string, string>;
+  clauseTextOverrides?: Record<string, string>;
+  customSections?: Array<{ id: string; title: string; html: string }>;
   /**
    * Re-render mode for an existing document: exactly these clause versions (and, if given,
    * sections) are rendered, ignoring rules, toggles and later library edits.
@@ -89,6 +92,19 @@ function versionForClause(
   );
 }
 
+function clauseBodyHtml(
+  clauseId: string,
+  legalText: string,
+  versionId: string | undefined,
+  overrides: Record<string, string>,
+  context: Record<string, unknown>,
+) {
+  const raw = overrides[clauseId]?.trim() ? overrides[clauseId]! : legalText;
+  const versionAttr = versionId ? ` data-clause-version="${versionId}"` : "";
+  const customAttr = overrides[clauseId]?.trim() ? ` data-custom="true"` : "";
+  return `<div class="clause" data-clause-id="${clauseId}"${versionAttr}${customAttr}>${interpolate(raw, context)}</div>`;
+}
+
 export function assembleDocument(input: AssembleInput): AssembledDocument {
   const {
     template,
@@ -102,6 +118,9 @@ export function assembleDocument(input: AssembleInput): AssembledDocument {
     variables,
     enabledOptionalClauseIds = [],
     disabledClauseIds = [],
+    sectionTitleOverrides = {},
+    clauseTextOverrides = {},
+    customSections = [],
     pinnedClauseVersionIds,
     pinnedSectionIds,
     resolveAssets,
@@ -161,11 +180,11 @@ export function assembleDocument(input: AssembleInput): AssembledDocument {
       if (pinnedSections && !pinnedSections.has(section.id)) continue;
       for (const clauseId of section.clauseIds) {
         const version = clauseVersions.find((item) => item.clauseId === clauseId && pinned.has(item.id));
-        if (!version) continue;
+        if (!version && !clauseTextOverrides[clauseId]?.trim()) continue;
         includedClauseIds.push(clauseId);
-        usedClauseVersionIds.push(version.id);
+        if (version) usedClauseVersionIds.push(version.id);
         clauseHtml.push(
-          `<div class="clause" data-clause-id="${clauseId}" data-clause-version="${version.id}">${interpolate(version.legalText, context)}</div>`,
+          clauseBodyHtml(clauseId, version?.legalText ?? "", version?.id, clauseTextOverrides, context),
         );
       }
     } else {
@@ -189,9 +208,7 @@ export function assembleDocument(input: AssembleInput): AssembledDocument {
 
         includedClauseIds.push(clause.id);
         usedClauseVersionIds.push(version.id);
-        clauseHtml.push(
-          `<div class="clause" data-clause-id="${clause.id}" data-clause-version="${version.id}">${interpolate(version.legalText, context)}</div>`,
-        );
+        clauseHtml.push(clauseBodyHtml(clause.id, version.legalText, version.id, clauseTextOverrides, context));
       }
     }
 
@@ -199,14 +216,32 @@ export function assembleDocument(input: AssembleInput): AssembledDocument {
     sectionNumber += 1;
     includedSectionIds.push(section.id);
     const padded = String(sectionNumber).padStart(2, "0");
+    const heading = sectionTitleOverrides[section.id]?.trim() || section.title;
     const [leadClause, ...restClauses] = clauseHtml;
     sectionsHtml.push(`
       <section class="doc-section" id="${section.id}">
         <div class="section-lead">
-          <h2><span class="section-num">${padded}</span> ${escapeHtml(section.title)}</h2>
+          <h2><span class="section-num">${padded}</span> ${escapeHtml(heading)}</h2>
           ${leadClause ?? ""}
         </div>
         ${restClauses.join("\n")}
+      </section>
+    `);
+  }
+
+  for (const extra of customSections) {
+    const title = extra.title.trim();
+    const body = extra.html.trim();
+    if (!title && !body) continue;
+    sectionNumber += 1;
+    includedSectionIds.push(extra.id);
+    const padded = String(sectionNumber).padStart(2, "0");
+    sectionsHtml.push(`
+      <section class="doc-section" id="${escapeHtml(extra.id)}" data-custom="true">
+        <div class="section-lead">
+          <h2><span class="section-num">${padded}</span> ${escapeHtml(title || "Custom section")}</h2>
+          ${body ? `<div class="clause" data-clause-id="${escapeHtml(extra.id)}" data-custom="true">${interpolate(body, context)}</div>` : ""}
+        </div>
       </section>
     `);
   }
@@ -261,7 +296,9 @@ export function wrapDocumentHtml(args: {
   } = args;
   const isDark = theme.background === "dark";
   // Everything interpolated below is data — escape it once here.
+  // Never HTML-escape asset URLs: data: base64 must stay intact for PDF embedding.
   const safe = (value: unknown) => escapeHtml(String(value ?? ""));
+  const safeSrc = (value: unknown) => String(value ?? "").replaceAll('"', "%22");
   const company: CompanySettings = {
     ...rawCompany,
     legalName: safe(rawCompany.legalName),
@@ -273,20 +310,24 @@ export function wrapDocumentHtml(args: {
     phone: safe(rawCompany.phone),
     usPhone: rawCompany.usPhone ? safe(rawCompany.usPhone) : rawCompany.usPhone,
     ntn: rawCompany.ntn ? safe(rawCompany.ntn) : rawCompany.ntn,
-    sealPath: rawCompany.sealPath ? safe(rawCompany.sealPath) : rawCompany.sealPath,
+    sealPath: rawCompany.sealPath,
   };
   const partyName = safe(rawPartyName);
   const readableId = safe(rawReadableId);
   const title = safe(template.name);
   const rawAssets = resolveAssets(rawCompany, isDark);
-  const assets = { logo: safe(rawAssets.logo), signature: safe(rawAssets.signature), seal: safe(rawAssets.seal) };
+  const assets = {
+    logo: safeSrc(rawAssets.logo),
+    signature: safeSrc(rawAssets.signature),
+    seal: safeSrc(rawAssets.seal),
+  };
   const signatureBlock = renderSignatures(
     theme,
     company,
     partyName,
     partyKind,
     signatures,
-    company.sealPath || assets.seal,
+    safeSrc(company.sealPath || assets.seal),
   );
   const certificate = auditCertificate ? renderAuditCertificate(auditCertificate, readableId, title, partyName) : "";
   const address = safe(formatCompanyAddress(rawCompany));
@@ -443,7 +484,12 @@ export function documentCss(theme: DocumentTheme, isDark: boolean): string {
 
   return `
     @page { size: ${theme.pageSize}; margin: 0; }
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    *::-webkit-scrollbar { display: none; width: 0; height: 0; }
     html, body {
       margin: 0;
       padding: 0;

@@ -21,7 +21,10 @@ import type {
   Template,
   TemplateVersion,
 } from "@/lib/types";
-import { generateDocumentInputSchema } from "@/lib/validation/schemas";
+import {
+  documentContentOverridesSchema,
+  generateDocumentInputSchema,
+} from "@/lib/validation/schemas";
 
 export type PreviewResult = {
   html: string;
@@ -94,6 +97,9 @@ export async function previewFromInput(
     variables: parsed.variables,
     enabledOptionalClauseIds: parsed.enabledOptionalClauseIds,
     disabledClauseIds: parsed.disabledClauseIds,
+    sectionTitleOverrides: parsed.sectionTitleOverrides,
+    clauseTextOverrides: parsed.clauseTextOverrides,
+    customSections: parsed.customSections,
   });
 
   return {
@@ -165,6 +171,9 @@ export async function generateDocument(
       variables: parsed.variables,
       enabledOptionalClauseIds: parsed.enabledOptionalClauseIds,
       disabledClauseIds: parsed.disabledClauseIds,
+      sectionTitleOverrides: parsed.sectionTitleOverrides,
+      clauseTextOverrides: parsed.clauseTextOverrides,
+      customSections: parsed.customSections,
       documentId,
       readableId,
     });
@@ -245,6 +254,9 @@ export async function generateDocument(
         clauseVersionIds: assembled.clauseVersionIds,
         includedSectionIds: assembled.includedSectionIds,
         includedClauseIds: assembled.includedClauseIds,
+        sectionTitleOverrides: parsed.sectionTitleOverrides,
+        clauseTextOverrides: parsed.clauseTextOverrides,
+        customSections: parsed.customSections,
         renderedHtml: assembled.html,
         jurisdiction: String(parsed.variables.jurisdiction ?? company.defaultJurisdiction),
         generatedAt: now,
@@ -280,6 +292,64 @@ export async function generateDocument(
 
     return document;
   });
+}
+
+const EDITABLE_CONTENT_STATUSES = [
+  "DRAFT",
+  "CONFIGURING",
+  "REVIEW_REQUIRED",
+  "APPROVED",
+  "READY_TO_SEND",
+];
+
+export async function updateDocumentContent(
+  store: DataStore,
+  actor: SessionUser,
+  documentId: string,
+  input: unknown,
+): Promise<{ document: ContractDocument; html: string }> {
+  const parsed = documentContentOverridesSchema.parse(input);
+  const document = await store.getDoc<ContractDocument>("documents", documentId);
+  if (!document) throw new Error("Document not found");
+  if (!EDITABLE_CONTENT_STATUSES.includes(document.status)) {
+    throw new Error("Wording is locked once a document has been sent");
+  }
+  const version = await store.getDoc<DocumentVersion>("documentVersions", document.currentVersionId);
+  if (!version) throw new Error("Document version not found");
+
+  const nextVersion: DocumentVersion = {
+    ...version,
+    snapshot: {
+      ...version.snapshot,
+      sectionTitleOverrides: parsed.sectionTitleOverrides,
+      clauseTextOverrides: parsed.clauseTextOverrides,
+      customSections: parsed.customSections,
+    },
+  };
+  await store.setDoc("documentVersions", nextVersion);
+
+  const html = await assembleCurrentHtml(store, documentId);
+  const now = nowIso();
+  const withHtml: DocumentVersion = {
+    ...nextVersion,
+    snapshot: { ...nextVersion.snapshot, renderedHtml: html },
+  };
+  await store.setDoc("documentVersions", withHtml);
+
+  const nextDocument: ContractDocument = {
+    ...document,
+    updatedAt: now,
+    lastActivityAt: now,
+  };
+  await store.setDoc("documents", nextDocument);
+  await writeAudit(store, {
+    type: "DOCUMENT_EDITED",
+    actor,
+    entityType: "document",
+    entityId: documentId,
+    summary: `Updated headings and clause wording on ${document.readableId}.`,
+  });
+  return { document: nextDocument, html };
 }
 
 export async function approveDocument(
@@ -438,6 +508,9 @@ export async function assembleCurrentHtml(
     // Render exactly what was generated: pinned clause versions and sections.
     pinnedClauseVersionIds: version.snapshot.clauseVersionIds,
     pinnedSectionIds: version.snapshot.includedSectionIds,
+    sectionTitleOverrides: version.snapshot.sectionTitleOverrides,
+    clauseTextOverrides: version.snapshot.clauseTextOverrides,
+    customSections: version.snapshot.customSections,
     documentId: document.id,
     readableId: document.readableId,
     signatures:

@@ -392,6 +392,18 @@ export const companySnapshotSchema = z.object({
   jurisdiction: z.string().default(""),
 });
 
+export const customSectionSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  html: z.string().default(""),
+});
+
+export const documentContentOverridesSchema = z.object({
+  sectionTitleOverrides: z.record(z.string(), z.string()).default({}),
+  clauseTextOverrides: z.record(z.string(), z.string()).default({}),
+  customSections: z.array(customSectionSchema).default([]),
+});
+
 export const documentSnapshotSchema = z.object({
   resolvedVariables: z.record(z.string(), z.unknown()),
   personSnapshot: personSnapshotSchema.optional(),
@@ -407,6 +419,9 @@ export const documentSnapshotSchema = z.object({
   jurisdiction: z.string(),
   generatedAt: z.string(),
   generatedBy: z.string(),
+  sectionTitleOverrides: z.record(z.string(), z.string()).optional(),
+  clauseTextOverrides: z.record(z.string(), z.string()).optional(),
+  customSections: z.array(customSectionSchema).optional(),
 });
 
 export const contractDocumentSchema = z.object({
@@ -721,6 +736,9 @@ export const generateDocumentInputSchema = z.object({
   variables: z.record(z.string(), z.unknown()),
   enabledOptionalClauseIds: z.array(z.string()).default([]),
   disabledClauseIds: z.array(z.string()).default([]),
+  sectionTitleOverrides: z.record(z.string(), z.string()).default({}),
+  clauseTextOverrides: z.record(z.string(), z.string()).default({}),
+  customSections: z.array(customSectionSchema).default([]),
   themeId: z.enum(THEME_IDS).optional(),
   requestId: z.string().max(100).optional(),
 });
@@ -745,13 +763,90 @@ export const serviceVariablesSchema = z.object({
   services: z.array(z.string()).default([]),
   serviceFee: z.number().nonnegative().default(0),
   feeCurrency: z.string().default("USD"),
-  feeFrequency: z.enum(["monthly", "one_time", "quarterly"]).default("monthly"),
+  feeFrequency: z.string().min(1).default("monthly"),
   termMonths: z.number().int().positive().default(12),
   adSpendPaidSeparately: z.boolean().default(true),
   noSalesGuarantee: z.boolean().default(true),
   clientOwnsLeads: z.boolean().default(true),
   startDate: z.string().min(1),
   jurisdiction: z.string().default("United States"),
+});
+
+export const updateClauseInputSchema = z.object({
+  title: z.string().min(1).optional(),
+  description: z.string().optional(),
+  category: z.string().min(1).optional(),
+  status: z.enum(CLAUSE_STATUSES).optional(),
+  tags: z.array(z.string()).optional(),
+  legalText: z.string().min(1).optional(),
+  changeNotes: z.string().optional(),
+});
+
+export const createClauseInputSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().default(""),
+  category: z.string().min(1),
+  status: z.enum(CLAUSE_STATUSES).default("approved"),
+  tags: z.array(z.string()).default([]),
+  legalText: z.string().min(1),
+  changeNotes: z.string().default("Initial approved wording."),
+});
+
+export const templateSectionInputSchema = z.object({
+  id: z.string().optional(),
+  title: z.string().min(1),
+  clauseIds: z.array(z.string()).default([]),
+  order: z.number().int().optional(),
+  required: z.boolean().optional(),
+  optional: z.boolean().optional(),
+});
+
+export const updateTemplateInputSchema = z.object({
+  name: z.string().min(1).optional(),
+  description: z.string().optional(),
+  status: z.enum(TEMPLATE_STATUSES).optional(),
+  sections: z.array(templateSectionInputSchema).optional(),
+  changeNotes: z.string().optional(),
+});
+
+export const createTemplateInputSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().default(""),
+  category: z.enum(DOCUMENT_FAMILIES),
+  documentType: z.enum(DOCUMENT_TYPE_CODES),
+  themeId: z.enum(THEME_IDS).default("amplify_modern_dark"),
+  status: z.enum(TEMPLATE_STATUSES).default("active"),
+  sections: z.array(templateSectionInputSchema).min(1),
+});
+
+export const updatePackInputSchema = z.object({
+  name: z.string().min(1).optional(),
+  description: z.string().optional(),
+  templateIds: z.array(z.string()).optional(),
+});
+
+export const createPackInputSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().default(""),
+  templateIds: z.array(z.string()).min(1),
+});
+
+export const updateKnowledgeFindingInputSchema = z.object({
+  title: z.string().min(1).optional(),
+  sampleText: z.string().optional(),
+  decision: z.enum(KNOWLEDGE_DECISIONS).optional(),
+  status: z.enum(["pending", "resolved"]).optional(),
+  suggestedClauseId: z.string().optional(),
+});
+
+export const createKnowledgeFindingInputSchema = z.object({
+  title: z.string().min(1),
+  category: z.string().min(1),
+  sampleText: z.string().default(""),
+  decision: z.enum(KNOWLEDGE_DECISIONS).optional(),
+  status: z.enum(["pending", "resolved"]).default("pending"),
+  suggestedClauseId: z.string().optional(),
+  occurrenceCount: z.number().int().positive().default(1),
 });
 
 export type OrgUser = z.infer<typeof orgUserSchema>;
@@ -776,6 +871,8 @@ export type DocumentRelationship = z.infer<typeof documentRelationshipSchema>;
 export type ContractDocument = z.infer<typeof contractDocumentSchema>;
 export type DocumentVersion = z.infer<typeof documentVersionSchema>;
 export type DocumentSnapshot = z.infer<typeof documentSnapshotSchema>;
+export type CustomSection = z.infer<typeof customSectionSchema>;
+export type DocumentContentOverrides = z.infer<typeof documentContentOverridesSchema>;
 export type SigningRequest = z.infer<typeof signingRequestSchema>;
 export type SignatureEvent = z.infer<typeof signatureEventSchema>;
 export type StoredSignature = z.infer<typeof storedSignatureSchema>;

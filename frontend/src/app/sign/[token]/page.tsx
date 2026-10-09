@@ -70,6 +70,9 @@ export default function SignPage() {
   useEffect(() => {
     void openSigningAction(token).then((payload) => {
       setData(payload);
+      if (payload?.documentId) {
+        broadcastSigningEvent({ documentId: payload.documentId, type: "opened" });
+      }
       if (payload?.finalized || payload?.recipientSignedAt) {
         setStage("done");
       } else if (payload?.requireOtp && !payload.otpVerified) {

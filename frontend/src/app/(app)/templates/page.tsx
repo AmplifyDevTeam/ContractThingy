@@ -2,13 +2,20 @@ import { format } from "date-fns";
 import { IndexRow, PageHeader } from "@/components/page-header";
 import { Bento, Stat, Tile } from "@/components/bento";
 import { StatusBadge } from "@/components/status-badge";
-import { requirePermission } from "@/lib/auth/session";
+import { CreateTemplateDialog } from "@/components/library/create-template-dialog";
+import { can, requirePermission } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api";
-import type { Template } from "@/lib/types";
+import type { Clause, Template } from "@/lib/types";
 
 export default async function TemplatesPage() {
-  await requirePermission("templates.read");
-  const { templates } = await apiGet<{ templates: Template[] }>("/templates");
+  const session = await requirePermission("templates.read");
+  const canWrite = can(session, "templates.write");
+  const [{ templates }, clausesPayload] = await Promise.all([
+    apiGet<{ templates: Template[] }>("/templates"),
+    canWrite
+      ? apiGet<{ clauses: Clause[] }>("/clauses").catch(() => ({ clauses: [] as Clause[] }))
+      : Promise.resolve({ clauses: [] as Clause[] }),
+  ]);
   const employment = templates.filter((item) => item.category === "EMPLOYMENT").length;
   const client = templates.filter((item) => item.category === "CLIENT").length;
 
@@ -18,7 +25,8 @@ export default async function TemplatesPage() {
         back={{ href: "/dashboard", label: "Dashboard" }}
         kicker="Library"
         title="Templates"
-        description="Approved templates are versioned. Generating a document always locks the template version used."
+        description="Open a template to edit name, status, and section headings. Heading changes create a new version; generated documents keep the version they locked."
+        actions={canWrite ? <CreateTemplateDialog clauses={clausesPayload.clauses} /> : undefined}
       />
       <Bento className="md:grid-rows-[auto_auto]">
         <Tile kicker="Approved set" span={2} rowSpan={2}>

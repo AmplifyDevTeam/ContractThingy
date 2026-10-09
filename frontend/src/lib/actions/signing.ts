@@ -5,6 +5,7 @@ import { toResult } from "@/lib/actions/result";
 import { apiGet, apiPost } from "@/lib/api";
 
 export type SigningPayload = {
+  documentId: string;
   documentName: string;
   readableId: string;
   recipientName: string;

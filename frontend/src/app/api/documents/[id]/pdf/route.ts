@@ -16,14 +16,19 @@ export async function GET(
   });
   const contentType = res.headers.get("Content-Type") ?? "";
   if (!res.ok || !contentType.includes("application/pdf")) {
-    // PDF rendering unavailable on this deployment: fall back to the browser print view.
-    if (res.status === 503 || (res.ok && !contentType.includes("application/pdf"))) {
+    // PDF rendering unavailable: open the print view (Save as PDF in the browser).
+    if (res.status === 503 || (res.ok && contentType.includes("text/html"))) {
       return NextResponse.redirect(new URL(`/api/documents/${encodeURIComponent(id)}/print`, request.url));
     }
     const data = (await res.json().catch(() => null)) as { error?: string } | null;
     return NextResponse.json({ error: data?.error ?? "PDF unavailable" }, { status: res.status });
   }
   const bytes = await res.arrayBuffer();
+  const magic = new TextDecoder().decode(bytes.slice(0, 5));
+  if (!magic.startsWith("%PDF")) {
+    // Never label HTML (or other garbage) as a PDF download — Chrome then fails to open it.
+    return NextResponse.redirect(new URL(`/api/documents/${encodeURIComponent(id)}/print`, request.url));
+  }
   return new NextResponse(bytes, {
     headers: {
       "Content-Type": "application/pdf",

@@ -14,14 +14,24 @@ export async function GET(
     return NextResponse.json({ error: data?.error ?? "Signed copy unavailable" }, { status: res.status });
   }
   const body = await res.arrayBuffer();
+  const magic = new TextDecoder().decode(body.slice(0, 5));
+  const isPdf = contentType.includes("application/pdf") && magic.startsWith("%PDF");
+  if (isPdf) {
+    return new NextResponse(body, {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": res.headers.get("Content-Disposition") ?? "inline",
+        "Cache-Control": "private, no-store",
+      },
+    });
+  }
+  // HTML fallback (no PDF engine): show print view, never as a fake .pdf download.
   return new NextResponse(body, {
     headers: {
-      "Content-Type": contentType || "application/pdf",
-      "Content-Disposition": res.headers.get("Content-Disposition") ?? "inline",
+      "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "private, no-store",
-      ...(contentType.includes("text/html")
-        ? { "Content-Security-Policy": "default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" }
-        : {}),
+      "Content-Security-Policy":
+        "default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
     },
   });
 }

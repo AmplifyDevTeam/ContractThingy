@@ -95,7 +95,7 @@ export function AppShell({
         >
           {groups.map((group) => (
             <div key={group.label}>
-              <div className="mb-2 px-2.5 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+              <div className="mb-2 px-2.5 font-mono text-[10px] font-medium tracking-[0.14em] text-sidebar-foreground/75 uppercase">
                 {group.label}
               </div>
               <div className="space-y-0.5">
@@ -107,13 +107,13 @@ export function AppShell({
                       href={item.href}
                       prefetch={false}
                       className={cn(
-                        "group flex items-baseline gap-2.5 rounded-md py-1.5 pr-2 pl-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground",
-                        active && "bg-sidebar-accent text-foreground",
+                        "group flex items-baseline gap-2.5 rounded-md py-1.5 pr-2 pl-2.5 text-[13px] text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground",
+                        active && "bg-sidebar-accent font-medium text-foreground",
                       )}
                     >
                       <span
                         className={cn(
-                          "font-mono text-[10px] text-muted-foreground/70 transition-colors",
+                          "font-mono text-[10px] text-sidebar-foreground/70 transition-colors",
                           active && "text-primary",
                         )}
                       >

@@ -4,6 +4,7 @@ import { format } from "date-fns";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { DocumentActions } from "@/components/documents/document-actions";
+import { DocumentContentEditor } from "@/components/documents/document-content-editor";
 import { DocumentLiveSync } from "@/components/documents/document-live-sync";
 import { DocumentThemePicker } from "@/components/documents/document-theme-picker";
 import { SigningLinkPanel } from "@/components/documents/signing-panel";
@@ -14,10 +15,14 @@ import { themeById } from "@/lib/branding/themes";
 import { apiGet } from "@/lib/api";
 import type {
   AuditEvent,
+  Clause,
+  ClauseVersion,
   ContractDocument,
   DocumentRelationship,
   DocumentVersion,
   SigningRequest,
+  Template,
+  TemplateVersion,
 } from "@/lib/types";
 
 export default async function DocumentDetailPage({
@@ -36,13 +41,30 @@ export default async function DocumentDetailPage({
     relatedDocs: ContractDocument[];
     html: string;
     aiThemeEnabled: boolean;
+    canEditContent?: boolean;
+    template: Template | null;
+    templateVersion: TemplateVersion | null;
+    clauses: Clause[];
+    clauseVersions: ClauseVersion[];
   };
   try {
     data = await apiGet(`/documents/${id}`);
   } catch {
     notFound();
   }
-  const { document, version, relationships, audits, signing, relatedDocs, html, aiThemeEnabled } = data;
+  const {
+    document,
+    version,
+    relationships,
+    audits,
+    signing,
+    relatedDocs,
+    html,
+    aiThemeEnabled,
+    templateVersion,
+    clauses,
+    clauseVersions,
+  } = data;
   const activeSigning = signing
     .filter((item) => item.status !== "revoked")
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
@@ -57,6 +79,7 @@ export default async function DocumentDetailPage({
         status={document.status}
         signingStatus={activeSigning?.status ?? null}
         lastActivityAt={document.lastActivityAt ?? document.updatedAt}
+        recipientSignedAt={activeSigning?.recipientSignedAt ?? null}
       />
       <PageHeader
         back={{ href: "/documents", label: "Documents" }}
@@ -88,9 +111,33 @@ export default async function DocumentDetailPage({
           <iframe
             title="Document"
             sandbox=""
-            className="min-h-[80vh] w-full rounded-md border border-border bg-muted"
+            className="min-h-[58vh] w-full rounded-md border border-border bg-muted"
             srcDoc={html}
           />
+          <section className="rounded-md border border-border bg-card px-5 py-5">
+            <div className="mb-4 flex items-baseline justify-between gap-3">
+              <h3 className="text-[12px] font-medium text-muted-foreground">Headings & clauses</h3>
+              <p className="font-mono text-[11px] text-muted-foreground">
+                {templateVersion?.sections.length ?? 0} sections
+              </p>
+            </div>
+            {canEditTheme ? (
+              <DocumentContentEditor
+                documentId={document.id}
+                templateVersion={templateVersion}
+                clauses={clauses ?? []}
+                clauseVersions={clauseVersions ?? []}
+                sectionTitleOverrides={version?.snapshot.sectionTitleOverrides}
+                clauseTextOverrides={version?.snapshot.clauseTextOverrides}
+                customSections={version?.snapshot.customSections}
+                locked={designLocked}
+              />
+            ) : (
+              <p className="text-[13px] text-muted-foreground">
+                You can view this agreement, but wording edits need documents.edit.
+              </p>
+            )}
+          </section>
           <section className="rounded-md border border-border bg-card px-5 py-5">
             <div className="mb-3 flex items-baseline justify-between gap-3">
               <h3 className="text-[12px] font-medium text-muted-foreground">Audit</h3>
@@ -120,7 +167,7 @@ export default async function DocumentDetailPage({
             )}
           </section>
         </div>
-        <aside className="min-w-0 overflow-hidden rounded-md border border-border bg-card">
+        <aside className="min-w-0 self-start overflow-hidden rounded-md border border-border bg-card xl:sticky xl:top-4">
           <Inspector title="Snapshot">
             <p>Created {format(new Date(document.createdAt), "d MMM yyyy HH:mm")}</p>
             <p>Template version: {version?.snapshot.templateVersion}</p>

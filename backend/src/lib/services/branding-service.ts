@@ -63,8 +63,14 @@ export async function uploadBrandingAsset(
   if (kind === "logoDark") {
     next.logoPath = path;
     next.logoDarkPath = path;
+    // If the light slot is still the built-in default, keep one custom mark for both themes.
+    if (!isStoredBrandingPath(company.logoLightPath ?? "")) next.logoLightPath = path;
   }
-  if (kind === "logoLight") next.logoLightPath = path;
+  if (kind === "logoLight") {
+    next.logoLightPath = path;
+    next.logoPath = path;
+    if (!isStoredBrandingPath(company.logoDarkPath ?? "")) next.logoDarkPath = path;
+  }
   await store.setSettings("company", next);
   return next;
 }
@@ -77,8 +83,26 @@ export async function resolveAssetToEmbeddable(
   if (path.startsWith("data:") || path.startsWith("http://") || path.startsWith("https://")) return path;
   if (!isStoredBrandingPath(path)) return path;
   const file = await store.getFile(path);
-  if (!file) return path;
-  return `data:${file.contentType};base64,${Buffer.from(file.bytes).toString("base64")}`;
+  if (!file) {
+    console.warn("[branding] stored asset missing for PDF embed:", path);
+    return "";
+  }
+  const contentType = file.contentType?.startsWith("image/") ? file.contentType : "image/png";
+  return `data:${contentType};base64,${Buffer.from(file.bytes).toString("base64")}`;
+}
+
+async function embedWithFallback(
+  store: DataStore,
+  primary: string,
+  fallback: string,
+): Promise<string> {
+  const embedded = await resolveAssetToEmbeddable(store, primary);
+  if (embedded.startsWith("data:") || embedded.startsWith("/branding/")) return embedded;
+  if (fallback && fallback !== primary) {
+    const alt = await resolveAssetToEmbeddable(store, fallback);
+    if (alt.startsWith("data:") || alt.startsWith("/branding/")) return alt;
+  }
+  return fallback.startsWith("/branding/") ? fallback : primary.startsWith("/branding/") ? primary : fallback;
 }
 
 export async function resolveCompanyAssetsForPdf(
@@ -87,10 +111,21 @@ export async function resolveCompanyAssetsForPdf(
   isDark: boolean,
 ): Promise<{ logo: string; signature: string; seal: string }> {
   const assets = resolveBrandingAssets(company, isDark);
+  const defaults = resolveBrandingAssets(
+    {
+      ...company,
+      logoPath: undefined,
+      logoDarkPath: undefined,
+      logoLightPath: undefined,
+      signaturePath: undefined,
+      sealPath: undefined,
+    },
+    isDark,
+  );
   const [logo, signature, seal] = await Promise.all([
-    resolveAssetToEmbeddable(store, assets.logo),
-    resolveAssetToEmbeddable(store, assets.signature),
-    resolveAssetToEmbeddable(store, assets.seal),
+    embedWithFallback(store, assets.logo, defaults.logo),
+    embedWithFallback(store, assets.signature, defaults.signature),
+    embedWithFallback(store, assets.seal, defaults.seal),
   ]);
   return { logo, signature, seal };
 }

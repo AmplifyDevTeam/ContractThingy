@@ -1,12 +1,14 @@
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { Bento, MetaList, Stat, Tile } from "@/components/bento";
-import { requirePermission } from "@/lib/auth/session";
+import { TemplateEditor } from "@/components/library/template-editor";
+import { can, requirePermission } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api";
-import type { Template, TemplateVersion } from "@/lib/types";
+import type { Clause, Template, TemplateVersion } from "@/lib/types";
 
 export default async function TemplateDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  await requirePermission("templates.read");
+  const session = await requirePermission("templates.read");
+  const canWrite = can(session, "templates.write");
   const { id } = await params;
   let payload: { template: Template; versions: TemplateVersion[] };
   try {
@@ -15,8 +17,13 @@ export default async function TemplateDetailPage({ params }: { params: Promise<{
     notFound();
   }
   const { template, versions } = payload;
-  const current = versions.find((item) => item.id === template.currentVersionId);
+  const current = versions.find((item) => item.id === template.currentVersionId) ?? null;
   const sections = current?.sections.slice().sort((a, b) => a.order - b.order) ?? [];
+  const clauses = canWrite
+    ? (
+        await apiGet<{ clauses: Clause[] }>("/clauses").catch(() => ({ clauses: [] as Clause[] }))
+      ).clauses
+    : [];
 
   return (
     <div>
@@ -29,19 +36,28 @@ export default async function TemplateDetailPage({ params }: { params: Promise<{
       />
 
       <Bento className="md:grid-rows-[auto_auto]">
-        <Tile kicker="Template" span={2} rowSpan={2}>
-          <p className="font-display mt-4 text-[2.5rem] leading-none tracking-tight">{template.name}</p>
-          <p className="mt-4 max-w-[48ch] text-sm text-muted-foreground">
-            Current version v{template.currentVersion} is immutable once documents reference it. Creating a new version is required for wording changes.
-          </p>
-          <MetaList
-            rows={[
-              ["Category", template.category],
-              ["Status", template.status],
-              ["Versions", versions.length],
-              ["Sections", sections.length],
-            ]}
-          />
+        <Tile kicker={canWrite ? "Edit template" : "Template"} span={2} rowSpan={2}>
+          {canWrite ? (
+            <div className="mt-4">
+              <TemplateEditor template={template} currentVersion={current} clauses={clauses} />
+            </div>
+          ) : (
+            <>
+              <p className="font-display mt-4 text-[2.5rem] leading-none tracking-tight">{template.name}</p>
+              <p className="mt-4 max-w-[48ch] text-sm text-muted-foreground">
+                Current version v{template.currentVersion} is immutable once documents reference it. Creating a new
+                version is required for wording changes.
+              </p>
+              <MetaList
+                rows={[
+                  ["Category", template.category],
+                  ["Status", template.status],
+                  ["Versions", versions.length],
+                  ["Sections", sections.length],
+                ]}
+              />
+            </>
+          )}
         </Tile>
         <Tile kicker="Current version">
           <Stat value={`v${template.currentVersion}`} size="md" />
@@ -51,25 +67,29 @@ export default async function TemplateDetailPage({ params }: { params: Promise<{
         </Tile>
       </Bento>
 
-      <div className="mt-3">
-        <Bento>
-          <Tile kicker="Section map" span={3}>
-            <ol className="mt-2">
-              {sections.map((section) => (
-                <li key={section.id} className="border-b border-border py-4 last:border-b-0">
-                  <div className="flex gap-3">
-                    <span className="font-mono text-[11px] text-primary">{String(section.order).padStart(2, "0")}</span>
-                    <div>
-                      <div className="font-medium">{section.title}</div>
-                      <div className="mt-1 text-[13px] text-muted-foreground">{section.clauseIds.join(", ")}</div>
+      {!canWrite ? (
+        <div className="mt-3">
+          <Bento>
+            <Tile kicker="Section map" span={3}>
+              <ol className="mt-2">
+                {sections.map((section) => (
+                  <li key={section.id} className="border-b border-border py-4 last:border-b-0">
+                    <div className="flex gap-3">
+                      <span className="font-mono text-[11px] text-primary">
+                        {String(section.order).padStart(2, "0")}
+                      </span>
+                      <div>
+                        <div className="font-medium">{section.title}</div>
+                        <div className="mt-1 text-[13px] text-muted-foreground">{section.clauseIds.join(", ")}</div>
+                      </div>
                     </div>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </Tile>
-        </Bento>
-      </div>
+                  </li>
+                ))}
+              </ol>
+            </Tile>
+          </Bento>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -3,6 +3,8 @@ import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
 import { Bento, MetaList, Stat, Tile, TileLink } from "@/components/bento";
 import { StatusBadge } from "@/components/status-badge";
+import { CreateFindingDialog } from "@/components/library/create-finding-dialog";
+import { KnowledgeFindingsEditor } from "@/components/library/knowledge-findings-editor";
 import { can, requirePermission } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api";
 import { readSourceAnalysis, TYPE_LABELS } from "@/lib/knowledge/library";
@@ -55,6 +57,7 @@ function SourceRow({ doc, n }: { doc: SourceDocument; n: string }) {
 export default async function KnowledgePage() {
   const session = await requirePermission("knowledge.read");
   const canCreate = can(session, "documents.create");
+  const canWrite = can(session, "knowledge.write");
   const { sources, findings, companies, people } = await apiGet<{
     sources: SourceDocument[];
     findings: KnowledgeFinding[];
@@ -100,6 +103,7 @@ export default async function KnowledgePage() {
         kicker="Layer 1"
         title="Knowledge base"
         description="Historical Amplify employment and client agreements are the source library. Patterns become approved clauses only after legal review — AI never writes the legal wording."
+        actions={canWrite ? <CreateFindingDialog /> : undefined}
       />
 
       <Bento className="md:grid-rows-[auto_auto]">
@@ -130,29 +134,33 @@ export default async function KnowledgePage() {
       <div className="mt-3">
         <Bento>
           <Tile kicker="Approved patterns" span={3} action={<span className="font-mono text-[11px] text-muted-foreground">{String(allFindings.length).padStart(2, "0")}</span>}>
-            <div className="mt-2">
-              {allFindings.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">No patterns yet.</p> : null}
-              {allFindings.map((finding, index) => (
-                <div key={finding.id} className="border-b border-border py-4 last:border-b-0">
-                  <div className="flex flex-wrap items-baseline justify-between gap-3">
-                    <div className="flex gap-3">
-                      <span className="font-mono text-[11px] text-muted-foreground">{String(index + 1).padStart(2, "0")}</span>
-                      <div>
-                        <div className="font-medium">{finding.title}</div>
-                        <div className="mt-1 text-[13px] text-muted-foreground">
-                          Found in {finding.occurrenceCount} documents · {finding.category}
-                          {finding.suggestedClauseId ? ` · ${finding.suggestedClauseId}` : ""}
+            {canWrite ? (
+              <KnowledgeFindingsEditor findings={allFindings} />
+            ) : (
+              <div className="mt-2">
+                {allFindings.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">No patterns yet.</p> : null}
+                {allFindings.map((finding, index) => (
+                  <div key={finding.id} className="border-b border-border py-4 last:border-b-0">
+                    <div className="flex flex-wrap items-baseline justify-between gap-3">
+                      <div className="flex gap-3">
+                        <span className="font-mono text-[11px] text-muted-foreground">{String(index + 1).padStart(2, "0")}</span>
+                        <div>
+                          <div className="font-medium">{finding.title}</div>
+                          <div className="mt-1 text-[13px] text-muted-foreground">
+                            Found in {finding.occurrenceCount} documents · {finding.category}
+                            {finding.suggestedClauseId ? ` · ${finding.suggestedClauseId}` : ""}
+                          </div>
+                          {finding.sampleText ? (
+                            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">{finding.sampleText}</p>
+                          ) : null}
                         </div>
-                        {finding.sampleText ? (
-                          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">{finding.sampleText}</p>
-                        ) : null}
                       </div>
+                      <StatusBadge status={finding.decision ?? finding.status} />
                     </div>
-                    <StatusBadge status={finding.decision ?? finding.status} />
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </Tile>
         </Bento>
       </div>

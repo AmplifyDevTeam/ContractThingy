@@ -25,8 +25,19 @@ import {
   assembleCurrentHtml,
   generateDocument,
   previewFromInput,
+  updateDocumentContent,
   voidDocument,
 } from "@/lib/services/document-service";
+import {
+  createClause,
+  createKnowledgeFinding,
+  createPack,
+  createTemplate,
+  updateClause,
+  updateKnowledgeFinding,
+  updatePack,
+  updateTemplate,
+} from "@/lib/services/library-service";
 import {
   applyCompanySignature,
   getActiveSigningLink,
@@ -496,6 +507,13 @@ export function createApp() {
       await Promise.all(relatedIds.map((other) => store.getDoc<ContractDocument>("documents", other)))
     ).filter((item): item is ContractDocument => Boolean(item));
     const current = (await store.getDoc<ContractDocument>("documents", id)) ?? document;
+    const [template, templateVersion, clauses, clauseVersions] = await Promise.all([
+      store.getDoc<Template>("templates", current.templateId),
+      store.getDoc<TemplateVersion>("templateVersions", current.templateVersionId),
+      store.listDocs<Clause>("clauses"),
+      store.listDocs<ClauseVersion>("clauseVersions"),
+    ]);
+    const included = new Set(version?.snapshot.includedClauseIds ?? []);
     return c.json({
       document: current,
       version,
@@ -507,6 +525,11 @@ export function createApp() {
       ai,
       aiThemeEnabled: Boolean(geminiEnabled() && ai?.enabled && (ai.recommendThemes ?? true)),
       canEditTheme: EDITABLE_DESIGN_STATUSES.includes(current.status),
+      canEditContent: EDITABLE_DESIGN_STATUSES.includes(current.status),
+      template,
+      templateVersion,
+      clauses: clauses.filter((item) => included.has(item.id) || (templateVersion?.sections.some((section) => section.clauseIds.includes(item.id)) ?? false)),
+      clauseVersions: clauseVersions.filter((item) => included.has(item.clauseId) || version?.snapshot.clauseVersionIds.includes(item.id)),
     });
   });
 
@@ -515,28 +538,48 @@ export function createApp() {
     const store = await getStore(actor.orgId);
     const document = await store.getDoc<ContractDocument>("documents", c.req.param("id"));
     if (!document) return c.json({ error: "Not found" }, 404);
-    // A finalized agreement is served byte-for-byte from the stored, hashed file.
+    const pdfHeaders = (filename: string, sha256?: string) => ({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      ...(sha256 ? { "X-Content-SHA256": sha256 } : {}),
+    });
+    // A finalized agreement is served byte-for-byte when the stored file is a real PDF.
+    // Older finalizations may have stored HTML (PDF engine missing) — re-render on download.
     if (document.status === "FINALIZED" && document.finalPdfPath) {
       const file = await store.getFile(document.finalPdfPath);
-      if (file && file.contentType === "application/pdf") {
-        return new Response(Buffer.from(file.bytes), {
-          headers: {
-            "Content-Type": "application/pdf",
-            "Content-Disposition": `attachment; filename="${document.readableId}-signed.pdf"`,
-            "X-Content-SHA256": document.sha256 ?? "",
-          },
-        });
+      if (file) {
+        const head = new TextDecoder().decode(file.bytes.slice(0, 16)).trimStart();
+        const isPdf = file.contentType === "application/pdf" && head.startsWith("%PDF");
+        const isHtml =
+          file.contentType.startsWith("text/html") ||
+          head.startsWith("<!") ||
+          head.toLowerCase().startsWith("<html");
+        if (isPdf) {
+          return new Response(Buffer.from(file.bytes), {
+            headers: pdfHeaders(`${document.readableId}-signed.pdf`, document.sha256),
+          });
+        }
+        if (isHtml) {
+          try {
+            const pdf = await renderPdf(new TextDecoder().decode(file.bytes));
+            return new Response(Buffer.from(pdf), {
+              headers: pdfHeaders(`${document.readableId}-signed.pdf`),
+            });
+          } catch (error) {
+            if (error instanceof PdfUnavailableError) {
+              return c.json({ error: error.message }, 503);
+            }
+            throw error;
+          }
+        }
+        return c.json({ error: "PDF rendering is unavailable on this deployment" }, 503);
       }
-      if (file) return c.json({ error: "PDF rendering is unavailable on this deployment" }, 503);
     }
     const html = await assembleCurrentHtml(store, document.id);
     try {
       const pdf = await renderPdf(html);
       return new Response(Buffer.from(pdf), {
-        headers: {
-          "Content-Type": "application/pdf",
-          "Content-Disposition": `attachment; filename="${document.readableId}.pdf"`,
-        },
+        headers: pdfHeaders(`${document.readableId}.pdf`),
       });
     } catch (error) {
       if (error instanceof PdfUnavailableError) {
@@ -601,6 +644,13 @@ export function createApp() {
       metadata: { themeId },
     });
     return c.json({ document: next });
+  });
+
+  app.patch("/documents/:id/content", async (c) => {
+    const actor = await authed(c, "documents.edit");
+    const store = await getStore(actor.orgId);
+    const result = await updateDocumentContent(store, actor, c.req.param("id"), await c.req.json());
+    return c.json(result);
   });
 
   app.post("/documents/:id/theme/recommend", async (c) => {
@@ -871,6 +921,7 @@ export function createApp() {
     const canViewBody = !found.request.requireOtp || Boolean(found.request.otpVerifiedAt);
     const finalized = found.document.status === "FINALIZED";
     return c.json({
+      documentId: found.document.id,
       documentName: found.document.name,
       readableId: found.document.readableId,
       recipientName: found.request.recipientName,
@@ -891,7 +942,7 @@ export function createApp() {
     });
   });
 
-  /** Recipient's copy of the finalized agreement (PDF, or print-ready HTML if no PDF engine). */
+  /** Recipient's copy of the finalized agreement (PDF preferred; print HTML only if PDF engine unavailable). */
   app.get("/sign/:token/pdf", async (c) => {
     const store = await getStore();
     const found = await getSigningByToken(store, c.req.param("token"));
@@ -900,15 +951,38 @@ export function createApp() {
     if (document.status !== "FINALIZED" || !document.finalPdfPath) throw new Error("Signed copy is not available yet");
     const file = await store.getFile(document.finalPdfPath);
     if (!file) throw new Error("Signed copy is not available yet");
-    if (file.contentType.startsWith("text/html")) {
-      return c.html(printableHtml(new TextDecoder().decode(file.bytes)));
+    const head = new TextDecoder().decode(file.bytes.slice(0, 16)).trimStart();
+    const isPdf = file.contentType === "application/pdf" && head.startsWith("%PDF");
+    const isHtml =
+      file.contentType.startsWith("text/html") ||
+      head.startsWith("<!") ||
+      head.toLowerCase().startsWith("<html");
+    if (isPdf) {
+      return new Response(Buffer.from(file.bytes), {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `inline; filename="${document.readableId}-signed.pdf"`,
+        },
+      });
     }
-    return new Response(Buffer.from(file.bytes), {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="${document.readableId}-signed.pdf"`,
-      },
-    });
+    if (isHtml) {
+      const html = new TextDecoder().decode(file.bytes);
+      try {
+        const pdf = await renderPdf(html);
+        return new Response(Buffer.from(pdf), {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `inline; filename="${document.readableId}-signed.pdf"`,
+          },
+        });
+      } catch (error) {
+        if (error instanceof PdfUnavailableError) {
+          return c.html(printableHtml(html));
+        }
+        throw error;
+      }
+    }
+    throw new Error("Signed copy is not available yet");
   });
 
   app.post("/sign/:token/consent", async (c) => {
@@ -972,6 +1046,18 @@ export function createApp() {
     const store = await getStore(actor.orgId);
     return c.json({ templates: await store.listDocs<Template>("templates") });
   });
+  app.post("/templates", async (c) => {
+    const actor = await authed(c, "templates.write");
+    const store = await getStore(actor.orgId);
+    try {
+      const result = await createTemplate(store, actor, await c.req.json());
+      return c.json(result, 201);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Create failed";
+      if (message.startsWith("Unknown")) return c.json({ error: message }, 404);
+      return c.json({ error: message }, 400);
+    }
+  });
   app.get("/templates/:id", async (c) => {
     const actor = await authed(c, "templates.read");
     const store = await getStore(actor.orgId);
@@ -979,6 +1065,20 @@ export function createApp() {
     if (!template) return c.json({ error: "Not found" }, 404);
     const versions = await store.queryDocs<TemplateVersion>("templateVersions", (item) => item.templateId === template.id);
     return c.json({ template, versions });
+  });
+  app.patch("/templates/:id", async (c) => {
+    const actor = await authed(c, "templates.write");
+    const store = await getStore(actor.orgId);
+    try {
+      const result = await updateTemplate(store, actor, c.req.param("id"), await c.req.json());
+      return c.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Update failed";
+      if (message.includes("not found") || message.includes("Not found") || message.startsWith("Unknown")) {
+        return c.json({ error: message }, 404);
+      }
+      return c.json({ error: message }, 400);
+    }
   });
   app.get("/clauses", async (c) => {
     const actor = await authed(c, "clauses.read");
@@ -990,6 +1090,17 @@ export function createApp() {
     ]);
     return c.json({ clauses, templates, templateVersions });
   });
+  app.post("/clauses", async (c) => {
+    const actor = await authed(c, "clauses.write");
+    const store = await getStore(actor.orgId);
+    try {
+      const result = await createClause(store, actor, await c.req.json());
+      return c.json(result, 201);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Create failed";
+      return c.json({ error: message }, 400);
+    }
+  });
   app.get("/clauses/:id", async (c) => {
     const actor = await authed(c, "clauses.read");
     const store = await getStore(actor.orgId);
@@ -1000,6 +1111,18 @@ export function createApp() {
     const templateVersions = await store.listDocs<TemplateVersion>("templateVersions");
     return c.json({ clause, versions, templates, templateVersions });
   });
+  app.patch("/clauses/:id", async (c) => {
+    const actor = await authed(c, "clauses.write");
+    const store = await getStore(actor.orgId);
+    try {
+      const result = await updateClause(store, actor, c.req.param("id"), await c.req.json());
+      return c.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Update failed";
+      if (message.includes("not found") || message.includes("Not found")) return c.json({ error: message }, 404);
+      return c.json({ error: message }, 400);
+    }
+  });
   app.get("/packs", async (c) => {
     const actor = await authed(c, "packs.read");
     const store = await getStore(actor.orgId);
@@ -1007,6 +1130,32 @@ export function createApp() {
       packs: await store.listDocs<DocumentPack>("documentPacks"),
       templates: await store.listDocs<Template>("templates"),
     });
+  });
+  app.post("/packs", async (c) => {
+    const actor = await authed(c, "packs.write");
+    const store = await getStore(actor.orgId);
+    try {
+      const pack = await createPack(store, actor, await c.req.json());
+      return c.json({ pack }, 201);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Create failed";
+      if (message.startsWith("Unknown")) return c.json({ error: message }, 404);
+      return c.json({ error: message }, 400);
+    }
+  });
+  app.patch("/packs/:id", async (c) => {
+    const actor = await authed(c, "packs.write");
+    const store = await getStore(actor.orgId);
+    try {
+      const pack = await updatePack(store, actor, c.req.param("id"), await c.req.json());
+      return c.json({ pack });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Update failed";
+      if (message.includes("not found") || message.includes("Not found") || message.startsWith("Unknown")) {
+        return c.json({ error: message }, 404);
+      }
+      return c.json({ error: message }, 400);
+    }
   });
   app.get("/knowledge", async (c) => {
     const actor = await authed(c, "knowledge.read");
@@ -1023,6 +1172,29 @@ export function createApp() {
       people: people.map((person) => redactPerson(person, actor.role)),
       companies,
     });
+  });
+  app.post("/knowledge/findings", async (c) => {
+    const actor = await authed(c, "knowledge.write");
+    const store = await getStore(actor.orgId);
+    try {
+      const finding = await createKnowledgeFinding(store, actor, await c.req.json());
+      return c.json({ finding }, 201);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Create failed";
+      return c.json({ error: message }, 400);
+    }
+  });
+  app.patch("/knowledge/findings/:id", async (c) => {
+    const actor = await authed(c, "knowledge.write");
+    const store = await getStore(actor.orgId);
+    try {
+      const finding = await updateKnowledgeFinding(store, actor, c.req.param("id"), await c.req.json());
+      return c.json({ finding });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Update failed";
+      if (message.includes("not found") || message.includes("Not found")) return c.json({ error: message }, 404);
+      return c.json({ error: message }, 400);
+    }
   });
   app.get("/knowledge/:id/pdf", async (c) => {
     const actor = await authed(c, "knowledge.read");

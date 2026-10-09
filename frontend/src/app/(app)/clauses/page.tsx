@@ -2,8 +2,9 @@ import { format } from "date-fns";
 import { IndexRow, PageHeader } from "@/components/page-header";
 import { Bento, Stat, Tile } from "@/components/bento";
 import { StatusBadge } from "@/components/status-badge";
+import { CreateClauseDialog } from "@/components/library/create-clause-dialog";
 import { Input } from "@/components/ui/input";
-import { requirePermission } from "@/lib/auth/session";
+import { can, requirePermission } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api";
 import type { Clause, Template, TemplateVersion } from "@/lib/types";
 
@@ -12,7 +13,8 @@ export default async function ClausesPage({
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
-  await requirePermission("clauses.read");
+  const session = await requirePermission("clauses.read");
+  const canWrite = can(session, "clauses.write");
   const { q } = await searchParams;
   const { clauses: all, templates, templateVersions: versions } = await apiGet<{
     clauses: Clause[];
@@ -33,7 +35,8 @@ export default async function ClausesPage({
         back={{ href: "/dashboard", label: "Dashboard" }}
         kicker="Library"
         title="Clause library"
-        description="Approved legal wording lives here. AI can recommend clauses but cannot change this text without a new approved version."
+        description="Open a clause to edit title, status, tags, and approved wording. Wording changes create a new version so existing documents stay pinned."
+        actions={canWrite ? <CreateClauseDialog /> : undefined}
       />
       <Bento className="md:grid-rows-[auto_auto]">
         <Tile kicker="Wording" span={2} rowSpan={2}>

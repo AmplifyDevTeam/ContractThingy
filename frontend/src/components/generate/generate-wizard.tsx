@@ -19,6 +19,8 @@ import { generateAction, recommendAction, createPersonAction, createCompanyActio
 import { recommendFromClientHistory, recommendFromPersonHistory } from "@/lib/knowledge/library";
 import { AiCaption, AiHint } from "@/components/ai-hint";
 import { cn } from "@/lib/utils";
+import { MergeFieldInserter } from "@/components/library/merge-field-inserter";
+import { editableLegalToHtml, htmlToEditableLegal, LEGAL_TEXT_HINT } from "@/lib/legal-text";
 import type {
   Clause,
   ClauseVersion,
@@ -72,13 +74,26 @@ const WORK_MODE_OPTIONS = [
   { value: "remote", label: "Remote" },
 ] as const;
 
+const FEE_FREQUENCY_OPTIONS = [
+  { value: "monthly", label: "Monthly" },
+  { value: "one_time", label: "One time" },
+  { value: "quarterly", label: "Quarterly" },
+] as const;
+
+const SHIFT_OPTIONS = [
+  { value: "morning", label: "Morning" },
+  { value: "evening", label: "Evening" },
+  { value: "night", label: "Night" },
+  { value: "flexible", label: "Flexible" },
+] as const;
+
 const STEPS = [
   { n: "01", label: "Party" },
   { n: "02", label: "Record" },
   { n: "03", label: "Action" },
   { n: "04", label: "Template" },
   { n: "05", label: "Terms" },
-  { n: "06", label: "Clauses" },
+  { n: "06", label: "Wording" },
 ] as const;
 
 const PARTY_OPTIONS: Array<{ value: PartyType; label: string; hint: string }> = [
@@ -155,13 +170,13 @@ function defaultVars(company?: CompanySettings | null) {
     probation: { enabled: true, duration: c.defaultProbationDays ?? 30, unit: "days", paid: true },
     workingSchedule: {
       workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
-      shiftType: "evening",
+      shiftType: "evening" as string,
       startTime: "18:00",
       endTime: "02:00",
       breakStart: "22:00",
       breakEnd: "22:30",
       timezone: "Asia/Karachi",
-      workMode: c.defaultWorkMode ?? "remote",
+      workMode: (c.defaultWorkMode ?? "remote") as string,
       flexibleSchedule: false,
       urgentAvailability: false,
     },
@@ -171,7 +186,7 @@ function defaultVars(company?: CompanySettings | null) {
     remoteWork: (c.defaultWorkMode ?? "remote") !== "on_site",
     serviceFee: 3500,
     feeCurrency: c.defaultCurrency === "PKR" ? "USD" : c.defaultCurrency,
-    feeFrequency: "monthly",
+    feeFrequency: "monthly" as string,
     termMonths: 12,
     adSpendPaidSeparately: true,
     noSalesGuarantee: true,
@@ -197,6 +212,10 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
   const [enabledOptional, setEnabledOptional] = useState<string[]>(() =>
     (catalog.company?.defaultWorkMode ?? "remote") !== "on_site" ? ["cl_remote_work"] : [],
   );
+  const [sectionTitleOverrides, setSectionTitleOverrides] = useState<Record<string, string>>({});
+  const [clauseTextOverrides, setClauseTextOverrides] = useState<Record<string, string>>({});
+  const [customSections, setCustomSections] = useState<Array<{ id: string; title: string; html: string }>>([]);
+  const [openClauseCustom, setOpenClauseCustom] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
@@ -241,6 +260,22 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
 
   const showDocumentPreview = step >= 4 && Boolean(template && templateVersion && theme && company);
 
+  const clauseTextOverridesHtml = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(clauseTextOverrides).map(([id, value]) => [id, editableLegalToHtml(value)]),
+      ),
+    [clauseTextOverrides],
+  );
+  const customSectionsHtml = useMemo(
+    () =>
+      customSections.map((section) => ({
+        ...section,
+        html: editableLegalToHtml(section.html),
+      })),
+    [customSections],
+  );
+
   const preview = useMemo(() => {
     if (!showDocumentPreview || !template || !templateVersion || !theme || !company) return "";
     const variables = isClient
@@ -262,9 +297,12 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
       variables,
       enabledOptionalClauseIds: enabledOptional,
       disabledClauseIds,
+      sectionTitleOverrides,
+      clauseTextOverrides: clauseTextOverridesHtml,
+      customSections: customSectionsHtml,
       resolveAssets: previewAssets,
     }).html;
-  }, [showDocumentPreview, template, templateVersion, theme, company, vars, catalog, person, client, enabledOptional, disabledClauseIds, isClient]);
+  }, [showDocumentPreview, template, templateVersion, theme, company, vars, catalog, person, client, enabledOptional, disabledClauseIds, isClient, sectionTitleOverrides, clauseTextOverridesHtml, customSectionsHtml]);
 
   const includedClauses = useMemo(() => {
     if (!templateVersion) return [];
@@ -346,6 +384,9 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
           variables: isClient ? { ...vars, responsibilities: vars.services } : vars,
           enabledOptionalClauseIds: enabledOptional,
           disabledClauseIds,
+          sectionTitleOverrides,
+          clauseTextOverrides: clauseTextOverridesHtml,
+          customSections: customSectionsHtml,
           requestId,
         }),
         new Promise<never>((_, reject) => {
@@ -537,14 +578,22 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
     },
     3: { title: "What is changing?", hint: "Hire, amend, or open a new client engagement." },
     4: { title: "Approved template", hint: reason },
-    5: { title: "Commercial terms", hint: "These fields fill the locked clauses. They do not rewrite them." },
-    6: { title: "Clauses in force", hint: "Optional clauses can be toggled. Approved wording stays locked." },
+    5: { title: "Commercial terms", hint: "Preset values fill the agreement. Use Custom when a field needs a one-off value." },
+    6: {
+      title: "Wording for this draft",
+      hint: `Include or skip clauses, rename headings, and edit any clause for ${
+        person?.fullLegalName ?? client?.legalName ?? "this party"
+      } only — the shared library stays unchanged.`,
+    },
   } as const;
 
   const current = stepCopy[step as keyof typeof stepCopy];
   const partyLabel = PARTY_OPTIONS.find((item) => item.value === partyType)?.label ?? partyType;
   const actionLabel = [...EMPLOYEE_ACTIONS, ...CLIENT_ACTIONS].find((item) => item.value === action)?.label ?? action;
   const recordLabel = person?.fullLegalName ?? client?.legalName ?? "—";
+  const customizedClauseCount = Object.keys(clauseTextOverrides).filter((id) =>
+    clauseTextOverrides[id]?.trim(),
+  ).length;
 
   if (!catalog.company || catalog.templates.length === 0) {
     return (
@@ -993,9 +1042,17 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
                   <Field label="Work arrangement">
                     <select
                       className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
-                      value={vars.workingSchedule.workMode}
+                      value={
+                        WORK_MODE_OPTIONS.some((option) => option.value === vars.workingSchedule.workMode)
+                          ? vars.workingSchedule.workMode
+                          : "custom"
+                      }
                       onChange={(event) => {
-                        const mode = event.target.value as typeof vars.workingSchedule.workMode;
+                        const mode = event.target.value;
+                        if (mode === "custom") {
+                          patch("workingSchedule", { ...vars.workingSchedule, workMode: "custom" });
+                          return;
+                        }
                         const remote = mode !== "on_site";
                         patch("remoteWork", remote);
                         patch("workingSchedule", { ...vars.workingSchedule, workMode: mode });
@@ -1011,8 +1068,57 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
                           {option.label}
                         </option>
                       ))}
+                      <option value="custom">Custom</option>
                     </select>
                   </Field>
+                  {!WORK_MODE_OPTIONS.some((option) => option.value === vars.workingSchedule.workMode) ? (
+                    <Field label="Custom work arrangement">
+                      <Input
+                        value={vars.workingSchedule.workMode === "custom" ? "" : vars.workingSchedule.workMode}
+                        placeholder="e.g. 3 days office, travel weeks"
+                        onChange={(e) =>
+                          patch("workingSchedule", {
+                            ...vars.workingSchedule,
+                            workMode: e.target.value || "custom",
+                          })
+                        }
+                      />
+                    </Field>
+                  ) : null}
+                  <Field label="Shift">
+                    <select
+                      className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
+                      value={
+                        SHIFT_OPTIONS.some((option) => option.value === vars.workingSchedule.shiftType)
+                          ? vars.workingSchedule.shiftType
+                          : "custom"
+                      }
+                      onChange={(event) =>
+                        patch("workingSchedule", { ...vars.workingSchedule, shiftType: event.target.value })
+                      }
+                    >
+                      {SHIFT_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                      <option value="custom">Custom</option>
+                    </select>
+                  </Field>
+                  {!SHIFT_OPTIONS.some((option) => option.value === vars.workingSchedule.shiftType) ? (
+                    <Field label="Custom shift">
+                      <Input
+                        value={vars.workingSchedule.shiftType === "custom" ? "" : vars.workingSchedule.shiftType}
+                        placeholder="e.g. split shift"
+                        onChange={(e) =>
+                          patch("workingSchedule", {
+                            ...vars.workingSchedule,
+                            shiftType: e.target.value || "custom",
+                          })
+                        }
+                      />
+                    </Field>
+                  ) : null}
                   <div className="grid gap-4 sm:grid-cols-2">
                     <Field label="Start time">
                       <Input
@@ -1080,6 +1186,33 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
                     <Field label="Term (months)">
                       <Input type="number" value={vars.termMonths} onChange={(e) => patch("termMonths", Number(e.target.value))} />
                     </Field>
+                    <Field label="Fee frequency">
+                      <select
+                        className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
+                        value={
+                          FEE_FREQUENCY_OPTIONS.some((option) => option.value === vars.feeFrequency)
+                            ? vars.feeFrequency
+                            : "custom"
+                        }
+                        onChange={(e) => patch("feeFrequency", e.target.value)}
+                      >
+                        {FEE_FREQUENCY_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                        <option value="custom">Custom</option>
+                      </select>
+                    </Field>
+                    {!FEE_FREQUENCY_OPTIONS.some((option) => option.value === vars.feeFrequency) ? (
+                      <Field label="Custom fee frequency">
+                        <Input
+                          value={vars.feeFrequency === "custom" ? "" : vars.feeFrequency}
+                          placeholder="e.g. per campaign"
+                          onChange={(e) => patch("feeFrequency", e.target.value || "custom")}
+                        />
+                      </Field>
+                    ) : null}
                   </div>
                   <Toggle label="Ad spend paid separately" checked={vars.adSpendPaidSeparately} onChange={(checked) => patch("adSpendPaidSeparately", checked)} />
                   <Toggle label="No sales guarantee" checked={vars.noSalesGuarantee} onChange={(checked) => patch("noSalesGuarantee", checked)} />
@@ -1094,28 +1227,230 @@ export function GenerateWizard({ catalog }: { catalog: Catalog }) {
           ) : null}
 
           {step === 6 ? (
-            <div className="mt-6 space-y-3">
-              {includedClauses.map((clause) => {
-                const optional = clause.status === "optional";
-                const checked = optional ? enabledOptional.includes(clause.id) : !disabledClauseIds.includes(clause.id);
-                return (
-                  <label key={clause.id} className="flex items-center gap-3 border-b border-border py-3 text-sm">
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={(value) => {
-                        const on = Boolean(value);
-                        if (optional) {
-                          setEnabledOptional((current) => (on ? [...current, clause.id] : current.filter((id) => id !== clause.id)));
-                        } else {
-                          setDisabledClauseIds((current) => (on ? current.filter((id) => id !== clause.id) : [...current, clause.id]));
+            <div className="mt-6 space-y-6">
+              <div className="rounded-md border border-border bg-muted/20 px-4 py-3">
+                <p className="text-sm font-medium">Edit for {recordLabel} only</p>
+                <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+                  Open any clause and choose{" "}
+                  <span className="text-foreground">
+                    Edit for this {isClient ? "client" : "person"}
+                  </span>
+                  . Changes apply to this draft alone — the shared library stays unchanged.
+                  {customizedClauseCount > 0
+                    ? ` ${customizedClauseCount} clause${customizedClauseCount === 1 ? "" : "s"} customized.`
+                    : null}
+                </p>
+              </div>
+              {(templateVersion?.sections ?? [])
+                .slice()
+                .sort((a, b) => a.order - b.order)
+                .map((section) => {
+                  const sectionClauses = includedClauses.filter((clause) => section.clauseIds.includes(clause.id));
+                  if (sectionClauses.length === 0) return null;
+                  return (
+                    <div key={section.id} className="space-y-3 border-b border-border pb-5 last:border-b-0">
+                      <Field label="Section heading">
+                        <Input
+                          value={sectionTitleOverrides[section.id] ?? section.title}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setSectionTitleOverrides((current) => {
+                              const next = { ...current };
+                              if (value.trim() === section.title) delete next[section.id];
+                              else next[section.id] = value;
+                              return next;
+                            });
+                          }}
+                        />
+                      </Field>
+                      {sectionClauses.map((clause) => {
+                        const optional = clause.status === "optional";
+                        const checked = optional
+                          ? enabledOptional.includes(clause.id)
+                          : !disabledClauseIds.includes(clause.id);
+                        const customOpen = Boolean(openClauseCustom[clause.id] || clauseTextOverrides[clause.id]);
+                        const isCustomized = Boolean(clauseTextOverrides[clause.id]?.trim());
+                        const libraryText = htmlToEditableLegal(
+                          catalog.clauseVersions.find((item) => item.id === clause.currentVersionId)?.legalText ?? "",
+                        );
+                        return (
+                          <div
+                            key={clause.id}
+                            className={cn(
+                              "space-y-3 rounded-md border px-3 py-3",
+                              isCustomized ? "border-primary/40 bg-primary/5" : "border-border/70",
+                            )}
+                          >
+                            <div className="flex flex-wrap items-center gap-3">
+                              <label className="flex min-w-0 flex-1 items-center gap-3 text-sm">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(value) => {
+                                    const on = Boolean(value);
+                                    if (optional) {
+                                      setEnabledOptional((current) =>
+                                        on ? [...current, clause.id] : current.filter((id) => id !== clause.id),
+                                      );
+                                    } else {
+                                      setDisabledClauseIds((current) =>
+                                        on ? current.filter((id) => id !== clause.id) : [...current, clause.id],
+                                      );
+                                    }
+                                  }}
+                                />
+                                <span className="min-w-0 flex-1 font-medium">{clause.title}</span>
+                              </label>
+                              {optional ? (
+                                <span className="text-[11px] text-muted-foreground">Optional</span>
+                              ) : null}
+                              {isCustomized ? (
+                                <span className="rounded-md bg-primary/15 px-2 py-0.5 text-[11px] text-primary">
+                                  Edited for {recordLabel}
+                                </span>
+                              ) : null}
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant={customOpen ? "outline" : "secondary"}
+                                disabled={!checked}
+                                onClick={() => {
+                                  if (customOpen) {
+                                    setClauseTextOverrides((current) => {
+                                      const next = { ...current };
+                                      delete next[clause.id];
+                                      return next;
+                                    });
+                                    setOpenClauseCustom((current) => ({ ...current, [clause.id]: false }));
+                                  } else {
+                                    setClauseTextOverrides((current) => ({
+                                      ...current,
+                                      [clause.id]: libraryText,
+                                    }));
+                                    setOpenClauseCustom((current) => ({ ...current, [clause.id]: true }));
+                                  }
+                                }}
+                              >
+                                {customOpen
+                                  ? "Use library wording"
+                                  : `Edit for this ${isClient ? "client" : "person"}`}
+                              </Button>
+                            </div>
+                            {customOpen ? (
+                              <div className="space-y-2 border-t border-border/70 pt-3">
+                                <p className="text-[12px] text-muted-foreground">
+                                  This wording is only for {recordLabel}. Leave fields like [[Employee full name]] so
+                                  details still fill in automatically.
+                                </p>
+                                <Textarea
+                                  id={`gen-clause-${clause.id}`}
+                                  rows={5}
+                                  className="text-sm leading-relaxed"
+                                  value={clauseTextOverrides[clause.id] ?? libraryText}
+                                  onChange={(e) =>
+                                    setClauseTextOverrides((current) => ({
+                                      ...current,
+                                      [clause.id]: e.target.value,
+                                    }))
+                                  }
+                                />
+                                <MergeFieldInserter
+                                  textareaId={`gen-clause-${clause.id}`}
+                                  value={clauseTextOverrides[clause.id] ?? libraryText}
+                                  onChange={(next) =>
+                                    setClauseTextOverrides((current) => ({
+                                      ...current,
+                                      [clause.id]: next,
+                                    }))
+                                  }
+                                />
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium">Add a one-off section</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() =>
+                      setCustomSections((current) => [
+                        ...current,
+                        {
+                          id: `custom_${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Date.now()}`,
+                          title: "",
+                          html: "",
+                        },
+                      ])
+                    }
+                  >
+                    Add custom section
+                  </Button>
+                </div>
+                <p className="text-[12px] text-muted-foreground">{LEGAL_TEXT_HINT}</p>
+                {customSections.length === 0 ? (
+                  <p className="text-[13px] text-muted-foreground">
+                    Add a one-off heading and body when this agreement needs something the library does not cover.
+                  </p>
+                ) : null}
+                {customSections.map((section, index) => (
+                  <div key={section.id} className="space-y-2 rounded-md border border-border p-3">
+                    <Field label={`Custom heading ${index + 1}`}>
+                      <Input
+                        value={section.title}
+                        placeholder="Section title"
+                        onChange={(e) =>
+                          setCustomSections((current) =>
+                            current.map((item) =>
+                              item.id === section.id ? { ...item, title: e.target.value } : item,
+                            ),
+                          )
                         }
-                      }}
-                    />
-                    <span>{clause.title}</span>
-                    {optional ? <span className="ml-auto text-[11px] text-muted-foreground">Optional</span> : null}
-                  </label>
-                );
-              })}
+                      />
+                    </Field>
+                    <Field label="Custom wording">
+                      <div className="space-y-2">
+                        <Textarea
+                          id={`gen-custom-${section.id}`}
+                          rows={4}
+                          className="text-sm leading-relaxed"
+                          value={section.html}
+                          placeholder="Plain language for this document only"
+                          onChange={(e) =>
+                            setCustomSections((current) =>
+                              current.map((item) =>
+                                item.id === section.id ? { ...item, html: e.target.value } : item,
+                              ),
+                            )
+                          }
+                        />
+                        <MergeFieldInserter
+                          textareaId={`gen-custom-${section.id}`}
+                          value={section.html}
+                          onChange={(next) =>
+                            setCustomSections((current) =>
+                              current.map((item) =>
+                                item.id === section.id ? { ...item, html: next } : item,
+                              ),
+                            )
+                          }
+                        />
+                      </div>
+                    </Field>
+                    <button
+                      type="button"
+                      className="text-[11px] text-muted-foreground hover:text-foreground"
+                      onClick={() => setCustomSections((current) => current.filter((item) => item.id !== section.id))}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
           </StepTransition>

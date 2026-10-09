@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import { IndexRow, PageHeader } from "@/components/page-header";
 import { Bento, MetaList, Stat, Tile, TileLink } from "@/components/bento";
 import { StatusBadge } from "@/components/status-badge";
+import { DocumentsQueueLiveSync } from "@/components/documents/document-live-sync";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { can, requirePermission } from "@/lib/auth/session";
@@ -29,12 +30,14 @@ export default async function DocumentsPage({
   documents.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
 
   const finalized = all.filter((item) => item.status === "FINALIZED").length;
-  const open = all.filter((item) => ["SENT", "VIEWED", "PARTIALLY_SIGNED"].includes(item.status)).length;
+  const openDocs = all.filter((item) => ["SENT", "VIEWED", "PARTIALLY_SIGNED"].includes(item.status));
+  const open = openDocs.length;
   const employment = all.filter((item) => item.family === "EMPLOYMENT").length;
   const client = all.filter((item) => item.family === "CLIENT").length;
 
   return (
     <div>
+      <DocumentsQueueLiveSync documentIds={openDocs.map((item) => item.id)} />
       <PageHeader
         back={{ href: "/dashboard", label: "Dashboard" }}
         kicker="Library"

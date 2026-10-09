@@ -22,6 +22,8 @@ import type {
   SourceDocument,
   CompanySettings,
   WorkspaceSettings,
+  DocumentPack,
+  KnowledgeFinding,
 } from "@/lib/types";
 
 export type SigningLinkResult = {
@@ -179,6 +181,117 @@ async function updateDocumentThemeAction__impl(documentId: string, themeId: stri
   return data.document;
 }
 
+async function updateDocumentContentAction__impl(
+  documentId: string,
+  input: {
+    sectionTitleOverrides?: Record<string, string>;
+    clauseTextOverrides?: Record<string, string>;
+    customSections?: Array<{ id: string; title: string; html: string }>;
+  },
+) {
+  return apiPatch<{ document: ContractDocument; html: string }>(`/documents/${documentId}/content`, input);
+}
+
+async function createClauseAction__impl(input: {
+  title: string;
+  description?: string;
+  category: string;
+  status?: Clause["status"];
+  tags?: string[];
+  legalText: string;
+  changeNotes?: string;
+}) {
+  return apiPost<{ clause: Clause; version: ClauseVersion }>("/clauses", input);
+}
+
+async function updateClauseAction__impl(
+  clauseId: string,
+  input: {
+    title?: string;
+    description?: string;
+    category?: string;
+    status?: Clause["status"];
+    tags?: string[];
+    legalText?: string;
+    changeNotes?: string;
+  },
+) {
+  return apiPatch<{ clause: Clause; version: ClauseVersion }>(`/clauses/${clauseId}`, input);
+}
+
+async function createTemplateAction__impl(input: {
+  name: string;
+  description?: string;
+  category: Template["category"];
+  documentType: Template["documentType"];
+  themeId?: Template["themeId"];
+  status?: Template["status"];
+  sections: Array<{ id?: string; title: string; clauseIds: string[]; order?: number }>;
+}) {
+  return apiPost<{ template: Template; version: TemplateVersion }>("/templates", input);
+}
+
+async function updateTemplateAction__impl(
+  templateId: string,
+  input: {
+    name?: string;
+    description?: string;
+    status?: Template["status"];
+    sections?: Array<{ id?: string; title: string; clauseIds: string[]; order?: number }>;
+    changeNotes?: string;
+  },
+) {
+  return apiPatch<{ template: Template; version: TemplateVersion }>(`/templates/${templateId}`, input);
+}
+
+async function createPackAction__impl(input: {
+  name: string;
+  description?: string;
+  templateIds: string[];
+}) {
+  const data = await apiPost<{ pack: DocumentPack }>("/packs", input);
+  return data.pack;
+}
+
+async function updatePackAction__impl(
+  packId: string,
+  input: {
+    name?: string;
+    description?: string;
+    templateIds?: string[];
+  },
+) {
+  const data = await apiPatch<{ pack: DocumentPack }>(`/packs/${packId}`, input);
+  return data.pack;
+}
+
+async function createKnowledgeFindingAction__impl(input: {
+  title: string;
+  category: string;
+  sampleText?: string;
+  decision?: KnowledgeFinding["decision"];
+  status?: KnowledgeFinding["status"];
+  suggestedClauseId?: string;
+  occurrenceCount?: number;
+}) {
+  const data = await apiPost<{ finding: KnowledgeFinding }>("/knowledge/findings", input);
+  return data.finding;
+}
+
+async function updateKnowledgeFindingAction__impl(
+  findingId: string,
+  input: {
+    title?: string;
+    sampleText?: string;
+    decision?: KnowledgeFinding["decision"];
+    status?: KnowledgeFinding["status"];
+    suggestedClauseId?: string;
+  },
+) {
+  const data = await apiPatch<{ finding: KnowledgeFinding }>(`/knowledge/findings/${findingId}`, input);
+  return data.finding;
+}
+
 async function recommendDocumentThemeAction__impl(documentId: string) {
   return apiPost<{
     themeId: ThemeId;
@@ -266,6 +379,33 @@ export async function getDocumentSyncStateAction(...args: Parameters<typeof getD
 }
 export async function updateDocumentThemeAction(...args: Parameters<typeof updateDocumentThemeAction__impl>) {
   return toResult(() => updateDocumentThemeAction__impl(...args));
+}
+export async function updateDocumentContentAction(...args: Parameters<typeof updateDocumentContentAction__impl>) {
+  return toResult(() => updateDocumentContentAction__impl(...args));
+}
+export async function createClauseAction(...args: Parameters<typeof createClauseAction__impl>) {
+  return toResult(() => createClauseAction__impl(...args));
+}
+export async function updateClauseAction(...args: Parameters<typeof updateClauseAction__impl>) {
+  return toResult(() => updateClauseAction__impl(...args));
+}
+export async function createTemplateAction(...args: Parameters<typeof createTemplateAction__impl>) {
+  return toResult(() => createTemplateAction__impl(...args));
+}
+export async function updateTemplateAction(...args: Parameters<typeof updateTemplateAction__impl>) {
+  return toResult(() => updateTemplateAction__impl(...args));
+}
+export async function createPackAction(...args: Parameters<typeof createPackAction__impl>) {
+  return toResult(() => createPackAction__impl(...args));
+}
+export async function updatePackAction(...args: Parameters<typeof updatePackAction__impl>) {
+  return toResult(() => updatePackAction__impl(...args));
+}
+export async function createKnowledgeFindingAction(...args: Parameters<typeof createKnowledgeFindingAction__impl>) {
+  return toResult(() => createKnowledgeFindingAction__impl(...args));
+}
+export async function updateKnowledgeFindingAction(...args: Parameters<typeof updateKnowledgeFindingAction__impl>) {
+  return toResult(() => updateKnowledgeFindingAction__impl(...args));
 }
 export async function recommendDocumentThemeAction(...args: Parameters<typeof recommendDocumentThemeAction__impl>) {
   return toResult(() => recommendDocumentThemeAction__impl(...args));

@@ -1,6 +1,7 @@
 import { IndexRow, PageHeader } from "@/components/page-header";
 import { Bento, MetaList, Stat, Tile } from "@/components/bento";
 import { StatusBadge } from "@/components/status-badge";
+import { DocumentsQueueLiveSync } from "@/components/documents/document-live-sync";
 import { requirePermission } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api";
 import type { ContractDocument, SigningRequest } from "@/lib/types";
@@ -13,9 +14,11 @@ export default async function SignaturesPage() {
     const remaining = new Date(item.expiresAt).getTime() - Date.now();
     return item.status !== "revoked" && item.status !== "completed" && remaining > 0 && remaining < 3 * 24 * 60 * 60 * 1000;
   }).length;
+  const watchIds = [...new Set(open.map((item) => item.documentId))];
 
   return (
     <div>
+      <DocumentsQueueLiveSync documentIds={watchIds} />
       <PageHeader
         back={{ href: "/dashboard", label: "Dashboard" }}
         kicker="Workflow"

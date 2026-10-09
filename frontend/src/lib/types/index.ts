@@ -12,6 +12,8 @@ export type {
   CompanySnapshot,
   Compensation,
   ContractDocument,
+  CustomSection,
+  DocumentContentOverrides,
   DocumentPack,
   DocumentRelationship,
   DocumentSnapshot,
